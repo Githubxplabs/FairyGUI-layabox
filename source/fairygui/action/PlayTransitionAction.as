@@ -2,11 +2,12 @@ package fairygui.action
 {
 	import fairygui.Controller;
 	import fairygui.Transition;
+	import fairygui.utils.ByteBuffer;
 
 	public class PlayTransitionAction extends ControllerAction
 	{
 		public var transitionName:String;
-		public var repeat:int = 1;
+		public var playTimes:int = 1;
 		public var delay:Number = 0;
 		public var stopOnExit:Boolean = false;
 		
@@ -22,9 +23,9 @@ package fairygui.action
 			if(trans)
 			{
 				if(_currentTransition && _currentTransition.playing)
-					trans.changeRepeat(repeat);
+					trans.changePlayTimes(playTimes);
 				else
-					trans.play(null, repeat, delay);	
+					trans.play(null, playTimes, delay);	
 				_currentTransition = trans;
 			}
 		}
@@ -38,23 +39,14 @@ package fairygui.action
 			}
 		}
 		
-		override public function setup(xml:Object):void
+		override public function setup(buffer:ByteBuffer):void
 		{
-			super.setup(xml);
+			super.setup(buffer);
 			
-			transitionName = xml.getAttribute("transition");
-			
-			var str:String;
-			
-			str = xml.getAttribute("repeat");
-			if(str)
-				repeat = parseInt(str);
-			
-			str = xml.getAttribute("delay");
-			if(str)
-				delay = parseFloat(str);
-			
-			stopOnExit = xml.getAttribute("stopOnExit")=="true";
+			transitionName = buffer.readS();
+			playTimes = buffer.getInt32();
+			delay = buffer.getFloat32();
+			stopOnExit = buffer.readBool();
 		}
 	}
 }

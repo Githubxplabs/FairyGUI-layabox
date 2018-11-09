@@ -3,8 +3,6 @@ declare module fairygui {
         static None: number;
         static Both: number;
         static Height: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
@@ -12,8 +10,6 @@ declare module fairygui {
         static Common: number;
         static Check: number;
         static Radio: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
@@ -21,17 +17,14 @@ declare module fairygui {
         static Ascent: number;
         static Descent: number;
         static Arch: number;
-        constructor();
     }
 }
 declare module fairygui {
     class Controller extends laya.events.EventDispatcher {
-        _parent: GComponent;
-        _autoRadioGroupDepth: boolean;
-        private static _nextPageId;
+        parent: GComponent;
+        autoRadioGroupDepth: boolean;
         constructor();
         name: string;
-        parent: GComponent;
         selectedIndex: number;
         setSelectedIndex(value?: number): void;
         previsousIndex: number;
@@ -53,12 +46,6 @@ declare module fairygui {
         selectedPageId: string;
         oppositePageId: string;
         previousPageId: string;
-        setup(xml: Object): void;
-    }
-    class PageTransition {
-        transitionName: string;
-        fromIndex: number;
-        toIndex: number;
     }
 }
 declare module fairygui.display {
@@ -96,13 +83,16 @@ declare module fairygui.display {
 }
 declare module fairygui.display {
     class Image extends laya.display.Sprite {
-        private static _textureCache;
         constructor();
         tex: laya.resource.Texture;
         scaleTexture(x: number, y: number): void;
         scale9Grid: laya.maths.Rectangle;
         scaleByTile: boolean;
         tileGridIndice: number;
+        fillMethod: number;
+        fillOrigin: number;
+        fillClockwise: boolean;
+        fillAmount: number;
         static clearCache(): void;
     }
 }
@@ -111,32 +101,22 @@ declare module fairygui.display {
         interval: number;
         swing: boolean;
         repeatDelay: number;
+        timeScale: number;
         constructor();
-        frames: Array<any>;
+        frames: Array<Frame>;
         frameCount: number;
         boundsRect: laya.maths.Rectangle;
-        currentFrame: number;
+        frame: number;
         playing: boolean;
-        setPlaySettings(start?: number, end?: number, times?: number, endAt?: number, endHandler?: laya.utils.Handler): void;
-    }
-}
-declare module fairygui.display {
-    class PlayState {
-        reachEnding: boolean;
-        frameStarting: boolean;
-        reversed: boolean;
-        repeatedCount: number;
-        constructor();
-        update(mc: fairygui.display.MovieClip): void;
-        currentFrame: number;
+        smoothing: boolean;
         rewind(): void;
-        reset(): void;
-        copy(src: PlayState): void;
+        syncStatus(anotherMc: fairygui.display.MovieClip): void;
+        advance(timeInMiniseconds: number): void;
+        setPlaySettings(start?: number, end?: number, times?: number, endAt?: number, endHandler?: laya.utils.Handler): void;
     }
 }
 declare module fairygui {
     class DragDropManager {
-        private static _inst;
         static inst: DragDropManager;
         constructor();
         dragAgent: GObject;
@@ -172,11 +152,9 @@ declare module fairygui {
         static None: number;
         static Scale: number;
         static ScaleMatchHeight: number;
-				static ScaleMatchWidth: number;
+        static ScaleMatchWidth: number;
         static ScaleFree: number; 
         static ScaleNoBorder: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
@@ -185,8 +163,6 @@ declare module fairygui {
         static Horizontal: number;
         static Vertical: number;
         static Both: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
@@ -214,8 +190,7 @@ declare module fairygui {
         textWidth: number;
         ensureSizeCorrect(): void;
         protected handleSizeChanged(): void;
-        protected handleGrayedChanged(): void;
-        setup_beforeAdd(xml: Object): void;
+        protected handleGrayedChanged(): void;      
     }
 }
 declare module fairygui {
@@ -249,8 +224,6 @@ declare module fairygui {
         protected setState(val: string): void;
         handleControllerChanged(c: Controller): void;
         protected handleGrayedChanged(): void;
-        protected constructFromXML(xml: Object): void;
-        setup_afterAdd(xml: Object): void;
     }
 }
 declare module fairygui {
@@ -262,17 +235,22 @@ declare module fairygui {
         text: string;
         icon: string;
         titleColor: string;
+        titleFontSize: number;
         visibleItemCount: number;
-        popupDownward: any;
+        popupDirection: number;
         items: Array<any>;
         values: Array<any>;
         icons: Array<any>;
         selectedIndex: number;
         value: string;
         protected setState(val: string): void;
-        protected constructFromXML(xml: Object): void;
-        setup_afterAdd(xml: Object): void;
         protected showDropdown(): void;
+    }
+    
+    class PopupDirection {
+        static Auto: number;
+        static Up: number;
+        static Down: number;
     }
 }
 declare module fairygui {
@@ -325,6 +303,7 @@ declare module fairygui {
         childrenRenderOrder: number;
         apexIndex: number;
         mask: laya.display.Sprite;
+       	setMask(value: laya.display.Sprite, reversed: boolean): void;
         protected updateHitArea(): void;
         protected updateMask(): void;
         protected setupScroll(scrollBarMargin: Margin, scroll: number, scrollBarDisplay: number, flags: number, vtScrollBarRes: string, hzScrollBarRes: string, headerRes: string, footerRes: string): void;
@@ -341,9 +320,10 @@ declare module fairygui {
         childSortingOrderChanged(child: GObject, oldValue: number, newValue?: number): void;
         constructFromResource(): void;
         protected constructFromXML(xml: Object): void;
+        baseUserData: string;
     }
 }
-declare module fairygui {
+declare module fairygui.gears {
     class GearAnimation extends GearBase {
         constructor(owner: GObject);
         protected init(): void;
@@ -357,29 +337,27 @@ declare module fairygui {
         GearAnimationValue(playing?: boolean, frame?: number): any;
     }
 }
-declare module fairygui {
+declare module fairygui.gears {
     class GearBase {
         static disableAllTweenEffect: boolean;
-        protected _tween: boolean;
-        protected _easeType: Function;
-        protected _tweenTime: number;
-        protected _tweenDelay: number;
+        tweenConfig: GearTweenConfig;
         protected _owner: GObject;
         protected _controller: Controller;
         constructor(owner: GObject);
         controller: Controller;
-        tween: boolean;
-        tweenDelay: number;
-        tweenTime: number;
-        easeType: Function;
-        setup(xml: Object): void;
         protected addStatus(pageId: string, value: string): void;
         protected init(): void;
         apply(): void;
         updateState(): void;
     }
+    class GearTweenConfig {
+        tween: boolean;
+        easeType: number;
+        duration: number;
+        tweenDelay: number;
+    }
 }
-declare module fairygui {
+declare module fairygui.gears {
     class GearColor extends GearBase {
         constructor(owner: GObject);
         protected init(): void;
@@ -388,16 +366,15 @@ declare module fairygui {
         updateState(): void;
     }
 }
-declare module fairygui {
+declare module fairygui.gears {
     class GearDisplay extends GearBase {
-    		pages: Array<any>;
+        pages: Array<any>;
         constructor(owner: GObject);
         apply(): void;
     }
 }
-declare module fairygui {
+declare module fairygui.gears {
     class GearLook extends GearBase {
-    		tweener: laya.utils.Tween;
         constructor(owner: GObject);
         protected init(): void;
         protected addStatus(pageId: string, value: string): void;
@@ -411,9 +388,8 @@ declare module fairygui {
         GearLookValue(alpha?: number, rotation?: number, grayed?: boolean): any;
     }
 }
-declare module fairygui {
+declare module fairygui.gears {
     class GearSize extends GearBase {
-    		tweener: laya.utils.Tween;
         constructor(owner: GObject);
         protected init(): void;
         protected addStatus(pageId: string, value: string): void;
@@ -429,9 +405,28 @@ declare module fairygui {
         GearSizeValue(width?: number, height?: number, scaleX?: number, scaleY?: number): any;
     }
 }
-declare module fairygui {
+declare module fairygui.gears {
     class GearXY extends GearBase {
-    		tweener: laya.utils.Tween;
+        constructor(owner: GObject);
+        protected init(): void;
+        protected addStatus(pageId: string, value: string): void;
+        apply(): void;
+        updateState(): void;
+        updateFromRelations(dx: number, dy: number): void;
+    }
+}
+declare module fairygui.gears {
+    class GearText extends GearBase {
+        constructor(owner: GObject);
+        protected init(): void;
+        protected addStatus(pageId: string, value: string): void;
+        apply(): void;
+        updateState(): void;
+        updateFromRelations(dx: number, dy: number): void;
+    }
+}
+declare module fairygui.gears {
+    class GearIcon extends GearBase {
         constructor(owner: GObject);
         protected init(): void;
         protected addStatus(pageId: string, value: string): void;
@@ -444,7 +439,7 @@ declare module fairygui {
     class GGraph extends GObject {
         constructor();
         color: string;
-        drawRect(lineSize: number, lineColor: string, fillColor: string): void;
+        drawRect(lineSize: number, lineColor: string, fillColor: string, corners?: Array<any>): void;
         drawEllipse(lineSize: number, lineColor: string, fillColor: string): void;
         replaceMe(target: GObject): void;
         addBeforeMe(target: GObject): void;
@@ -452,7 +447,6 @@ declare module fairygui {
         setNativeObject(obj: laya.display.Sprite): void;
         protected createDisplayObject(): void;
         protected handleSizeChanged(): void;
-        setup_beforeAdd(xml: Object): void;
     }
 }
 declare module fairygui {
@@ -470,24 +464,23 @@ declare module fairygui {
         static None: number;
         static Horizontal: number;
         static Vertical: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
-    class GImage extends GObject implements IColorGear {
+    class GImage extends GObject implements fairygui.gears.IColorGear {
         image: fairygui.display.Image;
         constructor();
         color: string;
         flip: number;
-        gearColor: GearColor;
+        fillMethod: number;
+        fillOrigin: number;
+        fillClockwise: boolean;
+        fillAmount: number;
         handleControllerChanged(c: Controller): void;
         protected createDisplayObject(): void;
         constructFromResource(): void;
         protected handleXYChanged(): void;
         protected handleSizeChanged(): void;
-        setup_beforeAdd(xml: Object): void;
-        setup_afterAdd(xml: Object): void;
     }
 }
 declare module fairygui {
@@ -501,8 +494,6 @@ declare module fairygui {
         titleColor: string;
         titleFontSize: number;
         editable: boolean;
-        protected constructFromXML(xml: Object): void;
-        setup_afterAdd(xml: Object): void;
     }
 }
 declare module fairygui {
@@ -512,8 +503,8 @@ declare module fairygui {
          */
         itemRenderer: laya.utils.Handler;
         /**
-				 * itemProvider(index:int):String;
-				 */
+         * itemProvider(index:int):String;
+         */
 				itemProvider: laya.utils.Handler;
         constructor();
         dispose(): void;
@@ -562,12 +553,10 @@ declare module fairygui {
         numItems: number;
         refreshVirtualList(): void;
         protected updateBounds(): void;
-        setup_beforeAdd(xml: Object): void;
     }
 }
 declare module fairygui {
-    class GLoader extends GObject implements IAnimationGear, IColorGear {
-        private static _errorSignPool;
+    class GLoader extends GObject implements fairygui.gears.IAnimationGear, fairygui.gears.IColorGear {
         constructor();
         protected createDisplayObject(): void;
         dispose(): void;
@@ -575,41 +564,38 @@ declare module fairygui {
         align: string;
         verticalAlign: string;
         fill: number;
+        shrinkOnly: boolean;
         autoSize: boolean;
         playing: boolean;
         frame: number;
         color: string;
         showErrorSign: boolean;
         content: laya.display.Node;
+        component: GComponent;
         protected loadContent(): void;
         protected loadFromPackage(itemURL: string): void;
         protected loadExternal(): void;
         protected freeExternal(texture: laya.resource.Texture): void;
         protected onExternalLoadSuccess(texture: laya.resource.Texture): void;
         protected onExternalLoadFailed(): void;
-        gearAnimation: GearAnimation;
-        gearColor: GearColor;
         handleControllerChanged(c: Controller): void;
         protected handleSizeChanged(): void;
-        setup_beforeAdd(xml: Object): void;
-        setup_afterAdd(xml: Object): void;
     }
 }
 declare module fairygui {
-    class GMovieClip extends GObject implements IAnimationGear, IColorGear {
-        movieClip: fairygui.display.MovieClip;
+    class GMovieClip extends GObject implements fairygui.gears.IAnimationGear, fairygui.gears.IColorGear {
         constructor();
         color: string;
         protected createDisplayObject(): void;
         playing: boolean;
         frame: number;
+        timeScale: number;
+        rewind(): void;
+        syncStatus(anotherMc: fairygui.GMovieClip): void;
+        advance(timeInMiniseconds: number): void;
         setPlaySettings(start?: number, end?: number, times?: number, endAt?: number, endHandler?: laya.utils.Handler): void;
-        gearAnimation: GearAnimation;
-        gearColor: GearColor;
         handleControllerChanged(c: Controller): void;
         constructFromResource(): void;
-        setup_beforeAdd(xml: Object): void;
-        setup_afterAdd(xml: Object): void;
     }
 }
 declare module fairygui {
@@ -622,21 +608,21 @@ declare module fairygui {
         _parent: GComponent;
         _rawWidth: number;
         _rawHeight: number;
-        _sourceWidth: number;
-        _sourceHeight: number;
-        _initWidth: number;
-        _initHeight: number;
+        sourceWidth: number;
+        sourceHeight: number;
+        initWidth: number;
+        initHeight: number;
         _id: string;
         _name: string;
         _underConstruct: boolean;
-        _ructingData: Object;
-        _gearLocked: boolean;
         static _gInstanceCounter: number;
         constructor();
         id: string;
         name: string;
         x: number;
         y: number;
+        minX: number;
+        minY: number;
         pixelSnapping: boolean;
         setXY(xv: number, yv: number): void;
         center(restraint?: boolean): void;
@@ -644,10 +630,6 @@ declare module fairygui {
         height: number;
         setSize(wv: number, hv: number, ignorePivot?: boolean): void;
         ensureSizeCorrect(): void;
-        sourceHeight: number;
-        sourceWidth: number;
-        initHeight: number;
-        initWidth: number;
         maxHeight: number;
         maxWidth: number;
         minHeight: number;
@@ -662,6 +644,7 @@ declare module fairygui {
         setSkew(sx: number, sy: number): void;
         pivotX: number;
         pivotY: number;
+        pivotAsAnchor: boolean;
         setPivot(xv: number, yv?: number, asAnchor?: boolean): void;
         touchable: boolean;
         grayed: boolean;
@@ -680,10 +663,10 @@ declare module fairygui {
         onStage: boolean;
         resourceURL: string;
         group: GGroup;
-        gearDisplay: GearDisplay;
-        gearXY: GearXY;
-        gearSize: GearSize;
-        gearLook: GearLook;
+        gearDisplay: fairygui.gears.GearDisplay;
+        gearXY: fairygui.gears.GearXY;
+        gearSize: fairygui.gears.GearSize;
+        gearLook: fairygui.gears.GearLook;
         relations: Relations;
         addRelation(target: GObject, relationType: number, usePercent?: boolean): void;
         removeRelation(target: GObject, relationType?: number): void;
@@ -730,15 +713,8 @@ declare module fairygui {
         protected handleScaleChanged(): void;
         protected handleGrayedChanged(): void;
         constructFromResource(): void;
-        setup_beforeAdd(xml: Object): void;
-        setup_afterAdd(xml: Object): void;
-        private static sDragging;
-        private static sGlobalDragStart;
-        private static sGlobalRect;
-        private static sHelperPoint;
-        private static sDragHelperRect;
-        private static sDraggingQuery;
         static cast(sprite: laya.display.Sprite): GObject;
+        getGear(index: number): fairygui.gears.GearBase;
     }
 }
 declare module fairygui {
@@ -752,21 +728,19 @@ declare module fairygui {
 }
 declare module fairygui {
     class GProgressBar extends GComponent {
-        private static easeLinear;
         constructor();
         titleType: number;
         max: number;
         value: number;
-        tweenValue(value: number, duration: number): laya.utils.Tween;
+        tweenValue(value: number, duration: number): fairygui.tween.GTweener;
         update(newValue: number): void;
         protected constructFromXML(xml: Object): void;
         protected handleSizeChanged(): void;
-        setup_afterAdd(xml: Object): void;
         dispose(): void;
     }
 }
 declare module fairygui {
-    class GRichTextField extends GTextField implements IColorGear {
+    class GRichTextField extends GTextField implements fairygui.gears.IColorGear {
         div: laya.html.dom.HTMLDivElement;
         constructor();
         protected createDisplayObject(): void;
@@ -787,7 +761,6 @@ declare module fairygui {
 }
 declare module fairygui {
     class GRoot extends GComponent {
-        private static _inst;
         static inst: GRoot;
         constructor();
         showWindow(win: Window): void;
@@ -822,8 +795,6 @@ declare module fairygui {
         displayPerc: number;
         scrollPerc: number;
         minSize: number;
-        protected constructFromXML(xml: Object): void;
-        private static sScrollbarHelperPoint;
     }
 }
 declare module fairygui {
@@ -833,15 +804,11 @@ declare module fairygui {
         max: number;
         value: number;
         update(): void;
-        protected constructFromXML(xml: Object): void;
         protected handleSizeChanged(): void;
-        setup_afterAdd(xml: any): void;
-        private static sSilderHelperPoint;
     }
 }
 declare module fairygui {
-    class GTextField extends GObject implements IColorGear {
-        protected _gearColor: GearColor;
+    class GTextField extends GObject implements fairygui.gears.IColorGear {
         constructor();
         font: string;
         fontSize: number;
@@ -859,14 +826,14 @@ declare module fairygui {
         ubbEnabled: boolean;
         asPassword: boolean;
         textWidth: number;
-        gearColor: GearColor;
         handleControllerChanged(c: Controller): void;
-        setup_beforeAdd(xml: Object): void;
-        setup_afterAdd(xml: Object): void;
+        templateVars: any;
+        setVar(name: string, value: string): GTextField;
+        flushVars(): void;
     }
 }
 declare module fairygui {
-    class GTextInput extends GTextField implements IColorGear {
+    class GTextInput extends GTextField implements fairygui.gears.IColorGear {
         input: laya.display.Input;
         constructor();
         protected createDisplayObject(): void;
@@ -890,11 +857,11 @@ declare module fairygui {
         protected handleSizeChanged(): void;
     }
 }
-declare module fairygui {
+declare module fairygui.gears {
     interface IAnimationGear {
     }
 }
-declare module fairygui {
+declare module fairygui.gears {
     interface IColorGear {
     }
 }
@@ -909,8 +876,6 @@ declare module fairygui {
         static FlowHorizontal: number;
         static FlowVertical: number;
         static Pagination : number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
@@ -919,8 +884,6 @@ declare module fairygui {
         static Multiple: number;
         static Multiple_SingleClick: number;
         static None: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
@@ -930,7 +893,6 @@ declare module fairygui {
         top: number;
         bottom: number;
         constructor();
-        parse(str: string): void;
         copy(source: Margin): void;
     }
 }
@@ -939,33 +901,29 @@ declare module fairygui {
         static Visible: number;
         static Hidden: number;
         static Scroll: number;
-        static Scale: number;
-        static ScaleFree: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
     class PackageItem {
         owner: UIPackage;
         type: number;
+        objectType: number;
         id: string;
         name: string;
         width: number;
         height: number;
         file: string;
         decoded: boolean;
+        rawData: fairygui.utils.ByteBuffer;
         scale9Grid: laya.maths.Rectangle;
         scaleByTile: boolean;
         tileGridIndice: number;
         smoothing: boolean;
         texture: laya.resource.Texture;
-        pivot: laya.maths.Point;
         interval: number;
         repeatDelay: number;
         swing: boolean;
-        frames: Array<any>;
-        componentData: Object;
+        frames: Array<fairygui.display.Frame>;
         sound: laya.media.Sound;
         bitmapFont: fairygui.display.BitmapFont;
         constructor();
@@ -983,8 +941,7 @@ declare module fairygui {
         static Misc: number;
         static Font: number;
         static Atlas: number;
-        constructor();
-        static parse(value: string): number;
+        static Unknown: number;
     }
 }
 declare module fairygui {
@@ -1026,8 +983,6 @@ declare module fairygui {
         static ValueAndMax: number;
         static Value: number;
         static Max: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
@@ -1057,17 +1012,14 @@ declare module fairygui {
         private static RELATION_NAMES;
         constructor(owner: GObject);
         add(target: GObject, relationType: number, usePercent?: boolean): void;
-        addItems(target: GObject, sidePairs: string): void;
         remove(target: GObject, relationType?: number): void;
         contains(target: GObject): boolean;
         clearFor(target: GObject): void;
         clearAll(): void;
         copyFrom(source: Relations): void;
         dispose(): void;
-        onOwnerSizeChanged(dWidth: number, dHeight: number): void;
         ensureRelationsSizeCorrect(): void;
         empty: boolean;
-        setup(xml: Object): void;
     }
 }
 declare module fairygui {
@@ -1106,13 +1058,11 @@ declare module fairygui {
         static Visible: number;
         static Auto: number;
         static Hidden: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
     class ScrollPane extends Object {
-        constructor(owner: GComponent, scrollType: number, scrollBarMargin: Margin, scrollBarDisplay: number, flags: number, vtScrollBarRes: string, hzScrollBarRes: string, headerRes: string, footerRes: string);
+        constructor(owner: GComponent);
         owner: GComponent;
         hzScrollBar: GScrollBar;
         vtScrollBar: GScrollBar;
@@ -1135,11 +1085,13 @@ declare module fairygui {
         isRightMost: boolean;
         currentPageX: number;
         currentPageY: number;
+        setCurrentPageX(sc: number, ani?: boolean): void;
+        setPercX(sc: number, ani?: boolean): void;
         contentWidth: number;
         contentHeight: number;
         viewWidth: number;
         viewHeight: number;
-				isDragged: boolean;
+        isDragged: boolean;
         scrollTop(ani?: boolean): void;
         scrollBottom(ani?: boolean): void;
         scrollUp(speed?: number, ani?: boolean): void;
@@ -1160,76 +1112,24 @@ declare module fairygui {
         static Horizontal: number;
         static Vertical: number;
         static Both: number;
-        constructor();
-        static parse(value: string): number;
     }
 }
 declare module fairygui {
     class Transition {
         name: string;
-        autoPlay: boolean;
-        autoPlayRepeat: number;
-        autoPlayDelay: number;
         constructor(owner: GComponent);
-        play(onComplete?: laya.utils.Handler, times?: number, delay?: number): void;
+        play(onComplete?: laya.utils.Handler, times?: number, delay?: number, startTime?: number, endTime?: number): void;
         playReverse(onComplete?: laya.utils.Handler, times?: number, delay?: number): void;
         stop(setToComplete?: boolean, processCallback?: boolean): void;
         playing: boolean;
+        changePlayTimes(value: number): void;
+        setAutoPlay(value: boolean, times?: number, delay?: number):void;
+        setPaused(paused: boolean);
         setValue(label: string, ...args: any[]): void;
         setHook(label: string, callback: laya.utils.Handler): void;
         clearHooks(): void;
         setTarget(label: string, newTarget: GObject): void;
         setDuration(label: String, value: number):void;
-        updateFromRelations(targetId: string, dx: number, dy: number): void;
-        setup(xml: Object): void;
-    }
-    class TransitionActionType {
-        static XY: number;
-        static Size: number;
-        static Scale: number;
-        static Pivot: number;
-        static Alpha: number;
-        static Rotation: number;
-        static Color: number;
-        static Animation: number;
-        static Visible: number;
-        static Controller: number;
-        static Sound: number;
-        static Transition: number;
-        static Shake: number;
-        static Unknown: number;
-    }
-    class TransitionItem {
-        time: number;
-        targetId: string;
-        type: number;
-        duration: number;
-        value: TransitionValue;
-        startValue: TransitionValue;
-        endValue: TransitionValue;
-        easeType: Function;
-        repeat: number;
-        yoyo: boolean;
-        tween: boolean;
-        label: string;
-        label2: string;
-        hook: laya.utils.Handler;
-        hook2: laya.utils.Handler;
-        tweenTimes: number;
-        tweener: laya.utils.Tween;
-        completed: boolean;
-        target: fairygui.GObject;
-        TransitionItem(): any;
-    }
-    class TransitionValue {
-        f1: number;
-        f2: number;
-        f3: number;
-        i: number;
-        b: boolean;
-        s: string;
-        b1: boolean;
-        b2: boolean;
     }
 }
 declare module fairygui {
@@ -1258,25 +1158,21 @@ declare module fairygui {
         static clickDragSensitivity: number;
         static bringWindowToFrontOnClick: boolean;
         static textureLinearSampling: boolean;
+        static packageFileExtension: string;
     }
 }
 declare module fairygui {
     class UIObjectFactory {
-        static packageItemExtensions: Object;
-        private static loaderExtension;
         constructor();
         static setPackageItemExtension(url: string, type: any): void;
         static setLoaderExtension(type: any): void;
         static newObject(pi: PackageItem): GObject;
-        static newObject2(type: string): GObject;
+        static newObject2(type: number): GObject;
     }
 }
 declare module fairygui {
     class UIPackage {
         static _constructing: number;
-        private static _packageInstById;
-        private static _packageInstByName;
-        private static _bitmapFonts;
         constructor();
         static getById(id: string): UIPackage;
         static getByName(name: string): UIPackage;
@@ -1286,6 +1182,7 @@ declare module fairygui {
         static createObjectFromURL(url: string, userClass?: any): GObject;
         static getItemURL(pkgName: string, resName: string): string;
         static getItemByURL(url: string): PackageItem;
+        static getItemAssetByURL(url: string): Object;
         static normalizeURL(url: string): string;
         static getBitmapFontByURL(url: string): fairygui.display.BitmapFont;
         static setStringsSource(source: string): void;
@@ -1299,13 +1196,8 @@ declare module fairygui {
         getItemAssetByName(resName: string): Object;
         getItemAsset(item: PackageItem): Object;
         getItemAssetURL(item: PackageItem): string;
-        getPixelHitTestData(itemId: string): fairygui.utils.PixelHitTestData;
-    }
-    class AtlasSprite {
-        AtlasSprite(): any;
-        atlas: string;
-        rect: laya.maths.Rectangle;
-        rotated: boolean;
+        loadAllAssets();
+        unloadAssets();
     }
 }
 declare module fairygui.utils {
@@ -1321,13 +1213,10 @@ declare module fairygui.utils {
         static convertToHtmlColor(argb: number, hasAlpha?: boolean): string;
         static convertFromHtmlColor(str: string, hasAlpha?: boolean): number;
         static displayObjectToGObject(obj: laya.display.Node): fairygui.GObject;
-        static findChildNode(xml: Object, name: string): Object;
         static encodeHTML(str: string): string;
         static defaultUBBParser: UBBParser;
         static parseUBB(text: string): string;
         static removeUBB(text: string): string;
-        private static EaseMap;
-        static parseEaseType(value: string): Function;
     }
 }
 declare module fairygui.utils {
@@ -1398,7 +1287,7 @@ declare module fairygui {
 declare module fairygui.utils {
     class PixelHitTestData {
         pixelWidth: number;
-        scale: number;		
+        scale: number;
         pixels: Array<number>;
         constructor();
         load(ba: laya.utils.Byte);
@@ -1409,8 +1298,8 @@ declare module fairygui.utils {
     class PixelHitTest extends laya.utils.HitArea {
         offsetX: number;
         offsetY: number;
-        scaleX: number;		
-        scaleY: number;	
+        scaleX: number;
+        scaleY: number;
         constructor(data: fairygui.utils.PixelHitTestData, offsetX: number, offsetY: number);
         isHit(x: number, y: number):boolean;
     }
@@ -1463,5 +1352,156 @@ declare module fairygui.tree {
         updateNodes(nodes: Array<fairygui.tree.TreeNode>): void;
         expandAll(folderNode: fairygui.tree.TreeNode): void;
         collapseAll(folderNode: fairygui.tree.TreeNode): void;
+    }
+}
+
+declare module fairygui.tween {
+    class EaseType {
+        static Linear: number;
+        static SineIn: number;
+        static SineOut: number;
+        static SineInOut: number;
+        static QuadIn: number;
+        static QuadOut: number;
+        static QuadInOut: number;
+        static CubicIn: number;
+        static CubicOut: number;
+        static CubicInOut: number;
+        static QuartIn: number;
+        static QuartOut: number;
+        static QuartInOut: number;
+        static QuintIn: number;
+        static QuintOut: number;
+        static QuintInOut: number;
+        static ExpoIn: number;
+        static ExpoOut: number;
+        static ExpoInOut: number;
+        static CircIn: number;
+        static CircOut: number;
+        static CircInOut: number;
+        static ElasticIn: number;
+        static ElasticOut: number;
+        static ElasticInOut: number;
+        static BackIn: number;
+        static BackOut: number;
+        static BackInOut: number;
+        static BounceIn: number;
+        static BounceOut: number;
+        static BounceInOut: number;
+        static Custom: number;
+    }
+}
+declare module fairygui.tween {
+    class GTween {
+        static catchCallbackExceptions: boolean;
+        static to(start: number, end: number, duration: number): GTweener;
+        static to2(start: number, start2: number, end: number, end2: number, duration: number): GTweener;
+        static to3(start: number, start2: number, start3: number, end: number, end2: number, end3: number, duration: number): GTweener;
+        static to4(start: number, start2: number, start3: number, start4: number, end: number, end2: number, end3: number, end4: number, duration: number): GTweener;
+        static toColor(start: number, end: number, duration: number): GTweener;
+        static delayedCall(delay: number): GTweener;
+        static shake(startX: number, startY: number, amplitude: number, duration: number): GTweener;
+        static isTweening(target: Object, propType: Object): Boolean;
+        static kill(target: Object, complete?: Boolean, propType?: Object): void;
+        static getTween(target: Object, propType?: Object): GTweener;
+    }
+}
+declare module fairygui.tween {
+    class GTweener {
+        constructor();
+        setDelay(value: number): GTweener;
+        readonly delay: number;
+        setDuration(value: number): GTweener;
+        readonly duration: number;
+        setBreakpoint(value: number): GTweener;
+        setEase(value: number): GTweener;
+        setEasePeriod(value: number): GTweener;
+        setEaseOvershootOrAmplitude(value: number): GTweener;
+        setRepeat(repeat: number, yoyo?: boolean): GTweener;
+        readonly repeat: number;
+        setTimeScale(value: number): GTweener;
+        setSnapping(value: boolean): GTweener;
+        setTarget(value: Object, propType?: Object): GTweener;
+        readonly target: Object;
+        setUserData(value: any): GTweener;
+        readonly userData: any;
+        onUpdate(callback: Function, caller: any): GTweener;
+        onStart(callback: Function, caller: any): GTweener;
+        onComplete(callback: Function, caller: any): GTweener;
+        readonly startValue: TweenValue;
+        readonly endValue: TweenValue;
+        readonly value: TweenValue;
+        readonly deltaValue: TweenValue;
+        readonly normalizedTime: number;
+        readonly completed: boolean;
+        readonly allCompleted: boolean;
+        setPaused(paused: boolean): GTweener;
+        /**
+         * seek position of the tween, in seconds.
+         */
+        seek(time: number): void;
+        kill(complete?: boolean): void;
+    }
+}
+
+declare module fairygui.tween {
+    class TweenValue {
+        x: number;
+        y: number;
+        z: number;
+        w: number;
+        constructor();
+        color: number;
+        getField(index: number): number;
+        setField(index: number, value: number): void;
+        setZero(): void;
+    }
+}
+
+declare module fairygui.utils {
+    class ByteBuffer {
+        stringTable: Array<string>;
+        version: number;
+        constructor(data: any, offset?: number, length?: number);
+        skip(count: number): void;
+        readBool(): boolean;
+        readS(): string;
+        writeS(): string;
+        readColor(hasAlpha?: boolean): number;
+        readColorS(hasAlpha?: boolean): string;
+        readChar(): string;
+        readBuffer(): fairygui.utils.ByteBuffer;
+        seek(indexTablePos: number, blockIndex: number): boolean;
+    }
+}
+
+declare module fairygui {
+    class TranslationHelper {
+        strings: any;
+        static loadFromXML(source: string):void;
+    }
+}
+
+declare module fairygui {
+    class FillMethod {
+        static None: number;
+        static Horizontal: number;
+        static Vertical: number;
+        static Radial90: number;
+        static Radial180: number; 
+        static Radial360: number;
+    }
+}
+
+declare module fairygui {
+    class FillOrigin {
+        static Top: number;
+        static Bottom: number;
+        static Left: number;
+        static Right: number;
+        static TopLeft: number; 
+        static TopRight: number;
+        static BottomLeft: number; 
+        static BottomRight: number;
     }
 }

@@ -1,5 +1,7 @@
-package fairygui
+package fairygui.gears
 {
+	import fairygui.GObject;
+	import fairygui.utils.ByteBuffer;
 	
 	public class GearText extends GearBase
 	{
@@ -17,12 +19,12 @@ package fairygui
 			_storage = {};
 		}
 		
-		override protected function addStatus(pageId:String, value:String):void
+		override protected function addStatus(pageId: String, buffer:ByteBuffer):void
 		{
 			if(pageId==null)
-				_default = value;
+				_default = buffer.readS();
 			else
-				_storage[pageId] = value; 
+				_storage[pageId] = buffer.readS(); 
 		}
 		
 		override public function apply():void
@@ -30,8 +32,8 @@ package fairygui
 			_owner._gearLocked = true;
 			
 			var data:* = _storage[_controller.selectedPageId];
-			if(data!=undefined)
-				_owner.text = String(data);
+			if(data!==undefined)
+				_owner.text = data;
 			else
 				_owner.text = _default;
 			

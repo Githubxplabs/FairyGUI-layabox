@@ -10,8 +10,7 @@ package fairygui {
 		public var textField: Text;
 		
 		private var _font:String;
-		private var _color: String;           
-		private var _text: String;
+		private var _color: String;
 		private var _ubbEnabled: Boolean;
 		private var _singleLine:Boolean;
 		private var _letterSpacing:Number = 0;
@@ -56,10 +55,13 @@ package fairygui {
 			if(this._bitmapFont == null) {
 				if(this._widthAutoSize)
 					this.textField.width = 10000;
+				var text2:String = _text;
+				if (_templateVars != null)
+					text2 = parseTemplate(text2);
 				if(this._ubbEnabled) //laya还不支持同一个文本不同样式
-					this.textField.text = ToolSet.removeUBB(ToolSet.encodeHTML(this._text));
+					this.textField.text = ToolSet.removeUBB(ToolSet.encodeHTML(text2));
 				else
-					this.textField.text = this._text;
+					this.textField.text = text2;
 			}
 			else
 			{
@@ -81,13 +83,16 @@ package fairygui {
 		
 		override public function set font(value: String):void {
 			this._font = value;
-			if(ToolSet.startsWith(this._font,"ui://")) {
-				this._bitmapFont = UIPackage.getBitmapFontByURL(this._font);
+			if(ToolSet.startsWith(this._font,"ui://")) 
+				this._bitmapFont = UIPackage.getItemAssetByURL(this._font) as BitmapFont;
+			else
+				this._bitmapFont = null;
+			
+			if(this._bitmapFont!=null)
+			{
 				this.textField["setChanged"]();
 			}
 			else {
-				this._bitmapFont = null;
-				
 				if(this._font)
 					this.textField.font = this._font;
 				else
@@ -211,7 +216,7 @@ package fairygui {
 			return this._ubbEnabled;
 		}
 		
-		public function set autoSize(value: int):void {
+		override public function set autoSize(value: int):void {
 			if (this._autoSize != value) {
 				this.setAutoSize(value);
 			}
@@ -236,7 +241,7 @@ package fairygui {
 			}
 		}
 		
-		public function get autoSize(): int {
+		override public function get autoSize(): int {
 			return this._autoSize;
 		}
 		
@@ -321,9 +326,12 @@ package fairygui {
 			this._textWidth = 0;
 			this._textHeight = 0;
 			
-			var textLength: Number = this._text.length;
+			var text2:String = _text;
+			if (_templateVars != null)
+				text2 = parseTemplate(text2);
+			var textLength: Number = text2.length;
 			for (var offset: Number = 0; offset < textLength; ++offset) {
-				var ch: String = this._text.charAt(offset);
+				var ch: String = text2.charAt(offset);
 				var cc: Number = ch.charCodeAt(0);
 				
 				if (cc == 10) {
@@ -522,11 +530,14 @@ package fairygui {
 					glyph = this._bitmapFont.glyphs[ch];
 					if (glyph != null) {
 						charIndent = (line.height + line.textHeight) / 2 - Math.ceil(glyph.lineHeight*fontScale);
-						gr.drawTexture(glyph.texture,
-							charX + lineIndent + Math.ceil(glyph.offsetX*fontScale),
-							line.y + charIndent + Math.ceil(glyph.offsetY*fontScale),
-							glyph.texture.width * fontScale,
-							glyph.texture.height * fontScale);
+						if(glyph.texture)
+						{
+							gr.drawTexture(glyph.texture,
+								charX + lineIndent + Math.ceil(glyph.offsetX*fontScale),
+								line.y + charIndent + Math.ceil(glyph.offsetY*fontScale),
+								glyph.texture.width * fontScale,
+								glyph.texture.height * fontScale);
+						}
 						charX += letterSpacing + Math.ceil(glyph.advance*fontScale);
 					}
 					else {
@@ -585,13 +596,8 @@ package fairygui {
 			this.handleXYChanged();
 		}
 		
-		override public function setup_beforeAdd(xml: Object): void {
-			super.setup_beforeAdd(xml);
-			
-			var str: String;
-			str = xml.getAttribute("autoSize");
-			if (str)
-				this.setAutoSize(AutoSizeType.parse(str));
+		override public function flushVars():void {
+			this.text = _text;
 		}
 	}
 }

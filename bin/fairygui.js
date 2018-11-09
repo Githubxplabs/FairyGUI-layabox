@@ -2,15 +2,15 @@
 (function(window,document,Laya){
 	var __un=Laya.un,__uns=Laya.uns,__static=Laya.static,__class=Laya.class,__getset=Laya.getset,__newvec=Laya.__newvec;
 
-	var Browser=laya.utils.Browser,Byte=laya.utils.Byte,ColorFilter=laya.filters.ColorFilter,Ease=laya.utils.Ease;
-	var Event=laya.events.Event,EventDispatcher=laya.events.EventDispatcher,Graphics=laya.display.Graphics,HTMLDivElement=laya.html.dom.HTMLDivElement;
-	var Handler=laya.utils.Handler,HitArea=laya.utils.HitArea,Input=laya.display.Input,Log=laya.utils.Log,Node=laya.display.Node;
-	var Point=laya.maths.Point,Rectangle=laya.maths.Rectangle,Render=laya.renders.Render,Sound=laya.media.Sound;
+	var Browser=laya.utils.Browser,Byte=laya.utils.Byte,ColorFilter=laya.filters.ColorFilter,Event=laya.events.Event;
+	var EventDispatcher=laya.events.EventDispatcher,Graphics=laya.display.Graphics,HTMLDivElement=laya.html.dom.HTMLDivElement;
+	var Handler=laya.utils.Handler,HitArea=laya.utils.HitArea,Input=laya.display.Input,Loader=laya.net.Loader;
+	var Log=laya.utils.Log,Node=laya.display.Node,Point=laya.maths.Point,Rectangle=laya.maths.Rectangle,Render=laya.renders.Render;
 	var SoundManager=laya.media.SoundManager,Sprite=laya.display.Sprite,Stage=laya.display.Stage,Text=laya.display.Text;
-	var Texture=laya.resource.Texture,Tween=laya.utils.Tween,Utils=laya.utils.Utils;
+	var Texture=laya.resource.Texture,Utils=laya.utils.Utils,WeakObject=laya.utils.WeakObject;
 Laya.interface('fairygui.IUISource');
-Laya.interface('fairygui.IColorGear');
-Laya.interface('fairygui.IAnimationGear');
+Laya.interface('fairygui.gears.IColorGear');
+Laya.interface('fairygui.gears.IAnimationGear');
 //class fairygui.action.ControllerAction
 var ControllerAction=(function(){
 	function ControllerAction(){
@@ -30,21 +30,24 @@ var ControllerAction=(function(){
 
 	__proto.enter=function(controller){}
 	__proto.leave=function(controller){}
-	__proto.setup=function(xml){
-		var str;
-		str=xml.getAttribute("fromPage");
-		if(str)
-			this.fromPage=str.split(",");
-		str=xml.getAttribute("toPage");
-		if(str)
-			this.toPage=str.split(",");
+	__proto.setup=function(buffer){
+		var cnt=0;
+		var i=0;
+		cnt=buffer.getInt16();
+		this.fromPage=[];
+		for (i=0;i < cnt;i++)
+		this.fromPage[i]=buffer.readS();
+		cnt=buffer.getInt16();
+		this.toPage=[];
+		for (i=0;i < cnt;i++)
+		this.toPage[i]=buffer.readS();
 	}
 
 	ControllerAction.createAction=function(type){
 		switch(type){
-			case "play_transition":
+			case 0:
 				return new PlayTransitionAction();
-			case "change_page":
+			case 1:
 				return new ChangePageAction();
 			}
 		return null;
@@ -90,6 +93,7 @@ var AssetProxy=(function(){
 
 //class fairygui.AsyncOperation
 var AsyncOperation=(function(){
+	var DisplayListItem;
 	function AsyncOperation(){
 		/**
 		*callback(obj:GObject)
@@ -128,10 +132,9 @@ var AsyncOperation=(function(){
 		Laya.timer.clear(this,this.run);
 		this._itemList.length=0;
 		if(this._objectPool.length>0){
-			var obj;
-			for(var $each_obj in this._objectPool){
-				obj=this._objectPool[$each_obj];
-				obj.dispose();
+			var cnt=this._objectPool.length;
+			for(var i=0;i<cnt;i++){
+				this._objectPool[i].dispose();
 			}
 			this._objectPool.length=0;
 		}
@@ -140,47 +143,81 @@ var AsyncOperation=(function(){
 	__proto.internalCreateObject=function(item){
 		this._itemList.length=0;
 		this._objectPool.length=0;
-		this.collectComponentChildren(item);
-		this._itemList.push(new DisplayListItem(item,null));
+		var di=new DisplayListItem(item,9);
+		di.childCount=this.collectComponentChildren(item);
+		this._itemList.push(di);
 		this._index=0;
 		Laya.timer.frameLoop(1,this,this.run);
 	}
 
 	__proto.collectComponentChildren=function(item){
-		item.owner.getItemAsset(item);
-		var cnt=item.displayList.length;
-		for (var i=0;i < cnt;i++){
-			var di=item.displayList[i];
-			if (di.packageItem !=null && di.packageItem.type==4)
-				this.collectComponentChildren(di.packageItem);
-			else if (di.type=="list"){
-				var defaultItem=null;
-				di.listItemCount=0;
-				var col=di.desc.childNodes;
-				var length=col.length;
-				for (var j=0;j < length;j++){
-					var cxml=col[j];
-					if(cxml.nodeName !="item")
-						continue ;
-					var url=cxml.getAttribute("url");
-					if (!url){
-						if (defaultItem==null)
-							defaultItem=di.desc.getAttribute("defaultItem");
-						url=defaultItem;
-						if (!url)
-							continue ;
-					};
-					var pi=UIPackage.getItemByURL(url);
-					if (pi){
-						if (pi.type==4)
-							this.collectComponentChildren(pi);
-						this._itemList.push(new DisplayListItem(pi,null));
-						di.listItemCount++;
-					}
-				}
+		var buffer=item.rawData;
+		buffer.seek(0,2);
+		var di;
+		var pi;
+		var i=0;
+		var dataLen=0;
+		var curPos=0;
+		var pkg;
+		var dcnt=buffer.getInt16();
+		for (i=0;i < dcnt;i++){
+			dataLen=buffer.getInt16();
+			curPos=buffer.pos;
+			buffer.seek(curPos,0);
+			var type=buffer.readByte();
+			var src=buffer.readS();
+			var pkgId=buffer.readS();
+			buffer.pos=curPos;
+			if (src !=null){
+				if (pkgId !=null)
+					pkg=UIPackage.getById(pkgId);
+				else
+				pkg=item.owner;
+				pi=pkg !=null ? pkg.getItemById(src):null;
+				di=new DisplayListItem(pi,type);
+				if (pi !=null && pi.type==3)
+					di.childCount=this.collectComponentChildren(pi);
+			}
+			else{
+				di=new DisplayListItem(null,type);
+				if (type==10)
+					di.listItemCount=this.collectListChildren(buffer);
 			}
 			this._itemList.push(di);
+			buffer.pos=curPos+dataLen;
 		}
+		return dcnt;
+	}
+
+	__proto.collectListChildren=function(buffer){
+		buffer.seek(buffer.pos,8);
+		var listItemCount=0;
+		var i=0;
+		var nextPos=0;
+		var url;
+		var pi;
+		var di;
+		var defaultItem=buffer.readS();
+		var itemCount=buffer.getInt16();
+		for (i=0;i < itemCount;i++){
+			nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			url=buffer.readS();
+			if (url==null)
+				url=defaultItem;
+			if (url){
+				pi=UIPackage.getItemByURL(url);
+				if (pi !=null){
+					di=new DisplayListItem(pi,pi.objectType);
+					if (pi.type==3)
+						di.childCount=this.collectComponentChildren(pi);
+					this._itemList.push(di);
+					listItemCount++;
+				}
+			}
+			buffer.pos=nextPos;
+		}
+		return listItemCount;
 	}
 
 	__proto.run=function(){
@@ -198,10 +235,10 @@ var AsyncOperation=(function(){
 				obj.packageItem=di.packageItem;
 				this._objectPool.push(obj);
 				UIPackage._constructing++;
-				if (di.packageItem.type==4){
-					poolStart=this._objectPool.length-di.packageItem.displayList.length-1;
+				if (di.packageItem.type==3){
+					poolStart=this._objectPool.length-di.childCount-1;
 					(obj).constructFromResource2(this._objectPool,poolStart);
-					this._objectPool.splice(poolStart,di.packageItem.displayList.length);
+					this._objectPool.splice(poolStart,di.childCount);
 				}
 				else{
 					obj.constructFromResource();
@@ -211,7 +248,7 @@ var AsyncOperation=(function(){
 			else{
 				obj=UIObjectFactory.newObject2(di.type);
 				this._objectPool.push(obj);
-				if (di.type=="list" && di.listItemCount > 0){
+				if (di.type==10 && di.listItemCount > 0){
 					poolStart=this._objectPool.length-di.listItemCount-1;
 					for (k=0;k < di.listItemCount;k++)
 					(obj).itemPool.returnObject(this._objectPool[k+poolStart]);
@@ -230,51 +267,48 @@ var AsyncOperation=(function(){
 			this.callback.runWith(result);
 	}
 
+	AsyncOperation.__init$=function(){
+		//class DisplayListItem
+		DisplayListItem=(function(){
+			function DisplayListItem(packageItem,type){
+				this.packageItem=null;
+				this.type=0;
+				this.childCount=0;
+				this.listItemCount=0;
+				this.packageItem=packageItem;
+				this.type=type;
+			}
+			__class(DisplayListItem,'');
+			return DisplayListItem;
+		})()
+	}
+
 	return AsyncOperation;
 })()
 
 
+/**
+*Use for GTextField.autoSize
+*/
 //class fairygui.AutoSizeType
 var AutoSizeType=(function(){
 	function AutoSizeType(){}
 	__class(AutoSizeType,'fairygui.AutoSizeType');
-	AutoSizeType.parse=function(value){
-		switch (value){
-			case "none":
-				return 0;
-			case "both":
-				return 1;
-			case "height":
-				return 2;
-			default :
-				return 0;
-			}
-	}
-
 	AutoSizeType.None=0;
 	AutoSizeType.Both=1;
 	AutoSizeType.Height=2;
+	AutoSizeType.Shrink=3;
 	return AutoSizeType;
 })()
 
 
+/**
+*Use for GButton.mode
+*/
 //class fairygui.ButtonMode
 var ButtonMode=(function(){
 	function ButtonMode(){}
 	__class(ButtonMode,'fairygui.ButtonMode');
-	ButtonMode.parse=function(value){
-		switch (value){
-			case "Common":
-				return 0;
-			case "Check":
-				return 1;
-			case "Radio":
-				return 2;
-			default :
-				return 0;
-			}
-	}
-
 	ButtonMode.Common=0;
 	ButtonMode.Check=1;
 	ButtonMode.Radio=2;
@@ -282,23 +316,13 @@ var ButtonMode=(function(){
 })()
 
 
+/**
+*Use for GComponent.childrenRenderOrder
+*/
 //class fairygui.ChildrenRenderOrder
 var ChildrenRenderOrder=(function(){
 	function ChildrenRenderOrder(){}
 	__class(ChildrenRenderOrder,'fairygui.ChildrenRenderOrder');
-	ChildrenRenderOrder.parse=function(value){
-		switch (value){
-			case "ascent":
-				return 0;
-			case "descent":
-				return 1;
-			case "arch":
-				return 2;
-			default :
-				return 0;
-			}
-	}
-
 	ChildrenRenderOrder.Ascent=0;
 	ChildrenRenderOrder.Descent=1;
 	ChildrenRenderOrder.Arch=2;
@@ -325,8 +349,6 @@ var BitmapFont$1=(function(){
 //class fairygui.display.BMGlyph
 var BMGlyph=(function(){
 	function BMGlyph(){
-		this.x=0;
-		this.y=0;
 		this.offsetX=0;
 		this.offsetY=0;
 		this.width=0;
@@ -342,6 +364,337 @@ var BMGlyph=(function(){
 })()
 
 
+//class fairygui.display.FillUtils
+var FillUtils=(function(){
+	function FillUtils(){}
+	__class(FillUtils,'fairygui.display.FillUtils');
+	FillUtils.fill=function(w,h,method,origin,clockwise,amount){
+		var points;
+		switch(method){
+			case 1:
+				points=fairygui.display.FillUtils.fillHorizontal(w,h,origin,amount);
+				break ;
+			case 2:
+				points=fairygui.display.FillUtils.fillVertical(w,h,origin,amount);
+				break ;
+			case 3:
+				points=fairygui.display.FillUtils.fillRadial90(w,h,origin,clockwise,amount);
+				break ;
+			case 4:
+				points=fairygui.display.FillUtils.fillRadial180(w,h,origin,clockwise,amount);
+				break ;
+			case 5:
+				points=fairygui.display.FillUtils.fillRadial360(w,h,origin,clockwise,amount);
+				break ;
+			}
+		return points;
+	}
+
+	FillUtils.fillHorizontal=function(w,h,origin,amount){
+		var w2=w*amount;
+		if(origin==2 || origin==0)
+			return [0,0,w2,0,w2,h,0,h];
+		else
+		return [w,0,w,h,w-w2,h,w-w2,0];
+	}
+
+	FillUtils.fillVertical=function(w,h,origin,amount){
+		var h2=h*amount;
+		if(origin==2 || origin==0)
+			return [0,0,0,h2,w,h2,w,0];
+		else
+		return [0,h,w,h,w,h-h2,0,h-h2];
+	}
+
+	FillUtils.fillRadial90=function(w,h,origin,clockwise,amount){
+		if(clockwise && (origin==1 || origin==2)
+			|| !clockwise && (origin==0 || origin==3)){
+			amount=1-amount;
+		};
+		var v=NaN,v2=NaN,h2=NaN;
+		v=Math.tan(Math.PI / 2 *amount);
+		h2=w *v;
+		v2=(h2-h)/ h2;
+		var points;
+		switch(origin){
+			case 0:
+				if(clockwise){
+					if(h2<=h)
+						points=[0,0,w,h2,w,0];
+					else
+					points=[0,0,w*(1-v2),h,w,h,w,0];
+				}
+				else{
+					if(h2<=h)
+						points=[0,0,w,h2,w,h,0,h];
+					else
+					points=[0,0,w*(1-v2),h,0,h];
+				}
+				break ;
+			case 1:
+				if(clockwise){
+					if(h2<=h)
+						points=[w,0,0,h2,0,h,w,h];
+					else
+					points=[w,0,w*v2,h,w,h];
+				}
+				else{
+					if(h2<=h)
+						points=[w,0,0,h2,0,0];
+					else
+					points=[w,0,w*v2,h,0,h,0,0];
+				}
+				break ;
+			case 2:
+				if(clockwise){
+					if(h2<=h)
+						points=[0,h,w,h-h2,w,0,0,0];
+					else
+					points=[0,h,w*(1-v2),0,0,0];
+				}
+				else{
+					if(h2<=h)
+						points=[0,h,w,h-h2,w,h];
+					else
+					points=[0,h,w*(1-v2),0,w,0,w,h];
+				}
+				break ;
+			case 3:
+				if(clockwise){
+					if(h2<=h)
+						points=[w,h,0,h-h2,0,h];
+					else
+					points=[w,h,w*v2,0,0,0,0,h];
+				}
+				else{
+					if(h2<=h)
+						points=[w,h,0,h-h2,0,0,w,0];
+					else
+					points=[w,h,w*v2,0,w,0];
+				}
+				break ;
+			}
+		return points;
+	}
+
+	FillUtils.movePoints=function(points,offsetX,offsetY){
+		var cnt=points.length;
+		for(var i=0;i<cnt;i+=2){
+			points[i]+=offsetX;
+			points[i+1]+=offsetY;
+		}
+	}
+
+	FillUtils.fillRadial180=function(w,h,origin,clockwise,amount){
+		var points;
+		switch(origin){
+			case 0:
+				if(amount<=0.5){
+					amount=amount / 0.5;
+					points=FillUtils.fillRadial90(w/2,h,
+					clockwise?0:1,
+					clockwise,
+					amount);
+					if(clockwise)
+						FillUtils.movePoints(points,w/2,0);
+				}
+				else{
+					amount=(amount-0.5)/ 0.5;
+					points=FillUtils.fillRadial90(w/2,h,
+					clockwise?1:0,
+					clockwise,
+					amount);
+					if(clockwise)
+						points.push(w,h,w,0);
+					else{
+						FillUtils.movePoints(points,w/2,0);
+						points.push(0,h,0,0);
+					}
+				}
+				break ;
+			case 1:
+				if(amount<=0.5){
+					amount=amount / 0.5;
+					points=FillUtils.fillRadial90(w/2,h,
+					clockwise?3:2,
+					clockwise,
+					amount);
+					if(!clockwise)
+						FillUtils.movePoints(points,w/2,0);
+				}
+				else{
+					amount=(amount-0.5)/ 0.5;
+					points=FillUtils.fillRadial90(w/2,h,
+					clockwise?2:3,
+					clockwise,
+					amount);
+					if(clockwise){
+						FillUtils.movePoints(points,w/2,0);
+						points.push(0,0,0,h);
+					}
+					else
+					points.push(w,0,w,h);
+				}
+				break ;
+			case 2:
+				if(amount<=0.5){
+					amount=amount / 0.5;
+					points=FillUtils.fillRadial90(w,h/2,
+					clockwise?2:0,
+					clockwise,
+					amount);
+					if(!clockwise)
+						FillUtils.movePoints(points,0,h/2);
+				}
+				else{
+					amount=(amount-0.5)/ 0.5;
+					points=FillUtils.fillRadial90(w,h/2,
+					clockwise?0:2,
+					clockwise,
+					amount);
+					if(clockwise){
+						FillUtils.movePoints(points,0,h/2);
+						points.push(w,0,0,0);
+					}
+					else
+					points.push(w,h,0,h);
+				}
+				break ;
+			case 3:
+				if(amount<=0.5){
+					amount=amount / 0.5;
+					points=FillUtils.fillRadial90(w,h/2,
+					clockwise?1:3,
+					clockwise,
+					amount);
+					if(clockwise)
+						FillUtils.movePoints(points,0,h/2);
+				}
+				else{
+					amount=(amount-0.5)/ 0.5;
+					points=FillUtils.fillRadial90(w,h/2,
+					clockwise?3:1,
+					clockwise,
+					amount);
+					if(clockwise)
+						points.push(0,h,w,h);
+					else{
+						FillUtils.movePoints(points,0,h/2);
+						points.push(0,0,w,0);
+					}
+				}
+				break ;
+			}
+		return points;
+	}
+
+	FillUtils.fillRadial360=function(w,h,origin,clockwise,amount){
+		var points;
+		switch(origin){
+			case 0:
+				if(amount<=0.5){
+					amount=amount / 0.5;
+					points=FillUtils.fillRadial180(w/2,h,
+					clockwise?2:3,
+					clockwise,
+					amount);
+					if(clockwise)
+						FillUtils.movePoints(points,w/2,0);
+				}
+				else{
+					amount=(amount-0.5)/ 0.5;
+					points=FillUtils.fillRadial180(w/2,h,
+					clockwise?3:2,
+					clockwise,
+					amount);
+					if(clockwise)
+						points.push(w,h,w,0,w/2,0);
+					else{
+						FillUtils.movePoints(points,w/2,0);
+						points.push(0,h,0,0,w/2,0);
+					}
+				}
+				break ;
+			case 1:
+				if(amount<=0.5){
+					amount=amount / 0.5;
+					points=FillUtils.fillRadial180(w/2,h,
+					clockwise?3:2,
+					clockwise,
+					amount);
+					if(!clockwise)
+						FillUtils.movePoints(points,w/2,0);
+				}
+				else{
+					amount=(amount-0.5)/ 0.5;
+					points=FillUtils.fillRadial180(w/2,h,
+					clockwise?2:3,
+					clockwise,
+					amount);
+					if(clockwise){
+						FillUtils.movePoints(points,w/2,0);
+						points.push(0,0,0,h,w/2,h);
+					}
+					else
+					points.push(w,0,w,h,w/2,h);
+				}
+				break ;
+			case 2:
+				if(amount<=0.5){
+					amount=amount / 0.5;
+					points=FillUtils.fillRadial180(w,h/2,
+					clockwise?1:0,
+					clockwise,
+					amount);
+					if(!clockwise)
+						FillUtils.movePoints(points,0,h/2);
+				}
+				else{
+					amount=(amount-0.5)/ 0.5;
+					points=FillUtils.fillRadial180(w,h/2,
+					clockwise?0:1,
+					clockwise,
+					amount);
+					if(clockwise){
+						FillUtils.movePoints(points,0,h/2);
+						points.push(w,0,0,0,0,h/2);
+					}
+					else
+					points.push(w,h,0,h,0,h/2);
+				}
+				break ;
+			case 3:
+				if(amount<=0.5){
+					amount=amount / 0.5;
+					points=FillUtils.fillRadial180(w,h/2,
+					clockwise?0:1,
+					clockwise,
+					amount);
+					if(clockwise)
+						FillUtils.movePoints(points,0,h/2);
+				}
+				else{
+					amount=(amount-0.5)/ 0.5;
+					points=FillUtils.fillRadial180(w,h/2,
+					clockwise?1:0,
+					clockwise,
+					amount);
+					if(clockwise)
+						points.push(0,h,w,h,w,h/2);
+					else{
+						FillUtils.movePoints(points,0,h/2);
+						points.push(0,0,w,0,w,h/2);
+					}
+				}
+				break ;
+			}
+		return points;
+	}
+
+	return FillUtils;
+})()
+
+
 //class fairygui.display.Frame
 var Frame=(function(){
 	function Frame(){
@@ -353,114 +706,6 @@ var Frame=(function(){
 
 	__class(Frame,'fairygui.display.Frame');
 	return Frame;
-})()
-
-
-//class fairygui.display.PlayState
-var PlayState=(function(){
-	function PlayState(){
-		this.reachEnding=false;
-		this.reversed=false;
-		this.repeatedCount=0;
-		this._curFrame=0;
-		this._curFrameDelay=0;
-		this._lastUpdateSeq=0;
-	}
-
-	__class(PlayState,'fairygui.display.PlayState');
-	var __proto=PlayState.prototype;
-	__proto.update=function(mc){
-		var elapsed=NaN;
-		var frameId=Laya.timer.currFrame;
-		if (frameId-this._lastUpdateSeq !=1)
-			elapsed=0;
-		else
-		elapsed=Laya.timer.delta;
-		this._lastUpdateSeq=frameId;
-		this.reachEnding=false;
-		this._curFrameDelay+=elapsed;
-		var interval=mc.interval+mc.frames[this._curFrame].addDelay+((this._curFrame==0 && this.repeatedCount > 0)? mc.repeatDelay :0);
-		if (this._curFrameDelay < interval)
-			return;
-		this._curFrameDelay-=interval;
-		if(this._curFrameDelay>mc.interval)
-			this._curFrameDelay=mc.interval;
-		if (mc.swing){
-			if(this.reversed){
-				this._curFrame--;
-				if(this._curFrame<=0){
-					this._curFrame=0;
-					this.repeatedCount++;
-					this.reversed=!this.reversed;
-				}
-			}
-			else{
-				this._curFrame++;
-				if (this._curFrame > mc.frameCount-1){
-					this._curFrame=Math.max(0,mc.frameCount-2);
-					this.repeatedCount++;
-					this.reachEnding=true;
-					this.reversed=!this.reversed;
-				}
-			}
-		}
-		else{
-			this._curFrame++;
-			if (this._curFrame > mc.frameCount-1){
-				this._curFrame=0;
-				this.repeatedCount++;
-				this.reachEnding=true;
-			}
-		}
-	}
-
-	__proto.rewind=function(){
-		this._curFrame=0;
-		this._curFrameDelay=0;
-		this.reversed=false;
-		this.reachEnding=false;
-	}
-
-	__proto.reset=function(){
-		this._curFrame=0;
-		this._curFrameDelay=0;
-		this.repeatedCount=0;
-		this.reachEnding=false;
-		this.reversed=false;
-	}
-
-	__proto.copy=function(src){
-		this._curFrame=src._curFrame;
-		this._curFrameDelay=src._curFrameDelay;
-		this.repeatedCount=src.repeatedCount;
-		this.reachEnding=src.reachEnding;
-		this.reversed=src.reversed;
-	}
-
-	__getset(0,__proto,'currentFrame',function(){
-		return this._curFrame;
-		},function(value){
-		this._curFrame=value;
-		this._curFrameDelay=0;
-	});
-
-	return PlayState;
-})()
-
-
-//class fairygui.DisplayListItem
-var DisplayListItem=(function(){
-	function DisplayListItem(packageItem,type){
-		this.packageItem=null;
-		this.type=null;
-		this.desc=null;
-		this.listItemCount=0;
-		this.packageItem=packageItem;
-		this.type=type;
-	}
-
-	__class(DisplayListItem,'fairygui.DisplayListItem');
-	return DisplayListItem;
 })()
 
 
@@ -581,23 +826,43 @@ var Events=(function(){
 })()
 
 
+//class fairygui.FillMethod
+var FillMethod=(function(){
+	function FillMethod(){}
+	__class(FillMethod,'fairygui.FillMethod');
+	FillMethod.None=0;
+	FillMethod.Horizontal=1;
+	FillMethod.Vertical=2;
+	FillMethod.Radial90=3;
+	FillMethod.Radial180=4;
+	FillMethod.Radial360=5;
+	return FillMethod;
+})()
+
+
+//class fairygui.FillOrigin
+var FillOrigin=(function(){
+	function FillOrigin(){}
+	__class(FillOrigin,'fairygui.FillOrigin');
+	FillOrigin.Top=0;
+	FillOrigin.Bottom=1;
+	FillOrigin.Left=2;
+	FillOrigin.Right=3;
+	FillOrigin.TopLeft=0;
+	FillOrigin.TopRight=1;
+	FillOrigin.BottomLeft=2;
+	FillOrigin.BottomRight=3;
+	return FillOrigin;
+})()
+
+
+/**
+*Use for GImage.flip
+*/
 //class fairygui.FlipType
 var FlipType=(function(){
 	function FlipType(){}
 	__class(FlipType,'fairygui.FlipType');
-	FlipType.parse=function(value){
-		switch (value){
-			case "hz":
-				return 1;
-			case "vt":
-				return 2;
-			case "both":
-				return 3;
-			default :
-				return 0;
-			}
-	}
-
 	FlipType.None=0;
 	FlipType.Horizontal=1;
 	FlipType.Vertical=2;
@@ -737,7 +1002,7 @@ var GObject=(function(){
 				(this).resizeChildren(dWidth,dHeight);
 			this.updateGear(2);
 			if(this._parent){
-				this._relations.onOwnerSizeChanged(dWidth,dHeight);
+				this._relations.onOwnerSizeChanged(dWidth,dHeight,this._pivotAsAnchor || !ignorePivot);
 				this._parent.setBoundsChangedFlag();
 				if (this._group !=null)
 					this._group.setBoundsChangedFlag(true);
@@ -1121,95 +1386,88 @@ var GObject=(function(){
 	}
 
 	__proto.constructFromResource=function(){}
-	__proto.setup_beforeAdd=function(xml){
-		var str;
-		var arr;
-		this._id=xml.getAttribute("id");
-		this._name=xml.getAttribute("name");
-		str=xml.getAttribute("xy");
-		arr=str.split(",");
-		this.setXY(parseInt(arr[0]),parseInt(arr[1]));
-		str=xml.getAttribute("size");
-		if (str){
-			arr=str.split(",");
-			this.initWidth=parseInt(arr[0]);
-			this.initHeight=parseInt(arr[1]);
+	__proto.setup_beforeAdd=function(buffer,beginPos){
+		buffer.seek(beginPos,0);
+		buffer.skip(5);
+		var f1=NaN;
+		var f2=NaN;
+		this._id=buffer.readS();
+		this._name=buffer.readS();
+		f1=buffer.getInt32();
+		f2=buffer.getInt32();
+		this.setXY(f1,f2);
+		if (buffer.readBool()){
+			this.initWidth=buffer.getInt32();
+			this.initHeight=buffer.getInt32();
 			this.setSize(this.initWidth,this.initHeight,true);
 		}
-		str=xml.getAttribute("restrictSize");
-		if(str){
-			arr=str.split(",");
-			this.minWidth=parseInt(arr[0]);
-			this.maxWidth=parseInt(arr[1]);
-			this.minHeight=parseInt(arr[2]);
-			this.maxHeight=parseInt(arr[3]);
+		if (buffer.readBool()){
+			this.minWidth=buffer.getInt32();
+			this.maxWidth=buffer.getInt32();
+			this.minHeight=buffer.getInt32();
+			this.maxHeight=buffer.getInt32();
 		}
-		str=xml.getAttribute("scale");
-		if(str){
-			arr=str.split(",");
-			this.setScale(parseFloat(arr[0]),parseFloat(arr[1]));
+		if (buffer.readBool()){
+			f1=buffer.getFloat32();
+			f2=buffer.getFloat32();
+			this.setScale(f1,f2);
 		}
-		str=xml.getAttribute("skew");
-		if(str){
-			arr=str.split(",");
-			this.setSkew(parseFloat(arr[0]),parseFloat(arr[1]));
+		if (buffer.readBool()){
+			f1=buffer.getFloat32();
+			f2=buffer.getFloat32();
+			this.setSkew(f1,f2);
 		}
-		str=xml.getAttribute("rotation");
-		if (str)
-			this.rotation=parseInt(str);
-		str=xml.getAttribute("pivot");
-		if (str){
-			arr=str.split(",");
-			str=xml.getAttribute("anchor");
-			this.setPivot(parseFloat(arr[0]),parseFloat(arr[1]),str=="true");
+		if (buffer.readBool()){
+			f1=buffer.getFloat32();
+			f2=buffer.getFloat32();
+			this.setPivot(f1,f2,buffer.readBool());
 		}
-		str=xml.getAttribute("alpha");
-		if (str)
-			this.alpha=parseFloat(str);
-		if(xml.getAttribute("touchable")=="false")
-			this.touchable=false;
-		if(xml.getAttribute("visible")=="false")
+		f1=buffer.getFloat32();
+		if (f1 !=1)
+			this.alpha=f1;
+		f1=buffer.getFloat32();
+		if (f1 !=0)
+			this.rotation=f1;
+		if (!buffer.readBool())
 			this.visible=false;
-		if(xml.getAttribute("grayed")=="true")
+		if (!buffer.readBool())
+			this.touchable=false;
+		if (buffer.readBool())
 			this.grayed=true;
-		this.tooltips=xml.getAttribute("tooltips");
-		str=xml.getAttribute("blend");
-		if (str)
-			this.blendMode=str;
-		str=xml.getAttribute("filter");
-		if (str){
-			switch (str){
-				case "color":
-					str=xml.getAttribute("filterData");
-					arr=str.split(",");
-					var cm=new ColorMatrix();
-					cm.adjustBrightness(parseFloat(arr[0]));
-					cm.adjustContrast(parseFloat(arr[1]));
-					cm.adjustSaturation(parseFloat(arr[2]));
-					cm.adjustHue(parseFloat(arr[3]));
-					var cf=new ColorFilter(cm);
-					this.filters=[cf];
-					break ;
-				}
-		}
-		str=xml.getAttribute("customData");
-		if (str)
+		var bm=buffer.readByte();
+		if(bm==2)
+			this.blendMode="lighter";
+		var filter=buffer.readByte();
+		if (filter==1){
+			var cm=new ColorMatrix();
+			cm.adjustBrightness(buffer.getFloat32());
+			cm.adjustContrast(buffer.getFloat32());
+			cm.adjustSaturation(buffer.getFloat32());
+			cm.adjustHue(buffer.getFloat32());
+			var cf=new ColorFilter(cm);
+			this.filters=[cf];
+		};
+		var str=buffer.readS();
+		if (str !=null)
 			this.data=str;
 	}
 
-	__proto.setup_afterAdd=function(xml){
-		var str=xml.getAttribute("group");
-		if (str)
-			this._group=this._parent.getChildById(str);
-		var col=xml.childNodes;
-		var length1=col.length;
-		for (var i1=0;i1 < length1;i1++){
-			var cxml=col[i1];
-			if(cxml.nodeType!=1)
-				continue ;
-			var index=fairygui.GObject.GearXMLKeys[cxml.nodeName];
-			if(index!=undefined)
-				this.getGear(index).setup(cxml);
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		buffer.seek(beginPos,1);
+		var str=buffer.readS();
+		if (str !=null)
+			this.tooltips=str;
+		var groupId=buffer.getInt16();
+		if (groupId >=0)
+			this.group=this.parent.getChildAt(groupId);
+		buffer.seek(beginPos,2);
+		var cnt=buffer.getInt16();
+		for (var i=0;i < cnt;i++){
+			var nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			var gear=this.getGear(buffer.readByte());
+			gear.setup(buffer);
+			buffer.pos=nextPos;
 		}
 	}
 
@@ -1306,8 +1564,13 @@ var GObject=(function(){
 		}
 	}
 
-	__getset(0,__proto,'actualHeight',function(){
-		return this.height *Math.abs(this._scaleY);
+	__getset(0,__proto,'yMin',function(){
+		return this._pivotAsAnchor ? (this._y-this._height *this._pivotY):this._y;
+		},function(value){
+		if (this._pivotAsAnchor)
+			this.setXY(this._x,value+this._height *this._pivotY);
+		else
+		this.setXY(this._x,value);
 	});
 
 	__getset(0,__proto,'id',function(){
@@ -1363,6 +1626,19 @@ var GObject=(function(){
 		this.setXY(this._x,value);
 	});
 
+	__getset(0,__proto,'gearXY',function(){
+		return (this.getGear(1));
+	});
+
+	__getset(0,__proto,'xMin',function(){
+		return this._pivotAsAnchor ? (this._x-this._width *this._pivotX):this._x;
+		},function(value){
+		if (this._pivotAsAnchor)
+			this.setXY(value+this._width *this._pivotX,this._y);
+		else
+		this.setXY(value,this._y);
+	});
+
 	__getset(0,__proto,'pixelSnapping',function(){
 		return this._pixelSnapping;
 		},function(value){
@@ -1389,6 +1665,10 @@ var GObject=(function(){
 		return this.width *Math.abs(this._scaleX);
 	});
 
+	__getset(0,__proto,'actualHeight',function(){
+		return this.height *Math.abs(this._scaleY);
+	});
+
 	__getset(0,__proto,'blendMode',function(){
 		return this._displayObject.blendMode;
 		},function(value){
@@ -1410,7 +1690,11 @@ var GObject=(function(){
 	__getset(0,__proto,'skewX',function(){
 		return this._skewX;
 		},function(value){
-		this.setScale(value,this._skewY);
+		this.setSkew(value,this._skewY);
+	});
+
+	__getset(0,__proto,'pivotAsAnchor',function(){
+		return this._pivotAsAnchor;
 	});
 
 	__getset(0,__proto,'skewY',function(){
@@ -1610,10 +1894,6 @@ var GObject=(function(){
 		return this._displayObject !=null && this._displayObject.stage !=null;
 	});
 
-	__getset(0,__proto,'gearXY',function(){
-		return (this.getGear(1));
-	});
-
 	__getset(0,__proto,'root',function(){
 		if((this instanceof fairygui.GRoot ))
 			return (this);
@@ -1695,90 +1975,57 @@ var GObject=(function(){
 	GObject.sDraggingQuery=false;
 	GObject.sUpdateInDragging=false;
 	__static(GObject,
-	['GearXMLKeys',function(){return this.GearXMLKeys={
-			"gearDisplay":0,
-			"gearXY":1,
-			"gearSize":2,
-			"gearLook":3,
-			"gearColor":4,
-			"gearAni":5,
-			"gearText":6,
-			"gearIcon":7
-	};},'sGlobalDragStart',function(){return this.sGlobalDragStart=new Point();},'sGlobalRect',function(){return this.sGlobalRect=new Rectangle();},'sHelperPoint',function(){return this.sHelperPoint=new Point();},'sDragHelperRect',function(){return this.sDragHelperRect=new Rectangle();}
-
+	['sGlobalDragStart',function(){return this.sGlobalDragStart=new Point();},'sGlobalRect',function(){return this.sGlobalRect=new Rectangle();},'sHelperPoint',function(){return this.sHelperPoint=new Point();},'sDragHelperRect',function(){return this.sDragHelperRect=new Rectangle();}
 	]);
 	return GObject;
 })()
 
 
-//class fairygui.GearBase
+//class fairygui.gears.GearBase
 var GearBase=(function(){
 	function GearBase(owner){
-		this._tween=false;
-		this._easeType=null;
-		this._tweenTime=0.3;
-		this._delay=0;
-		this._displayLockToken=0;
 		this._owner=null;
 		this._controller=null;
+		this._tweenConfig=null;
 		this._owner=owner;
-		this._easeType=Ease.quadOut;
 	}
 
-	__class(GearBase,'fairygui.GearBase');
+	__class(GearBase,'fairygui.gears.GearBase');
 	var __proto=GearBase.prototype;
-	__proto.setup=function(xml){
-		this._controller=this._owner.parent.getController(xml.getAttribute("controller"));
-		if(this._controller==null)
-			return;
+	__proto.setup=function(buffer){
+		this._controller=this._owner.parent.getControllerAt(buffer.getInt16());
 		this.init();
-		var str;
-		str=xml.getAttribute("tween");
-		if (str)
-			this._tween=true;
-		str=xml.getAttribute("ease");
-		if (str)
-			this._easeType=ToolSet.parseEaseType(str);
-		str=xml.getAttribute("duration");
-		if (str)
-			this._tweenTime=parseFloat(str);
-		str=xml.getAttribute("delay");
-		if (str)
-			this._delay=parseFloat(str);
-		if((this instanceof fairygui.GearDisplay )){
-			str=xml.getAttribute("pages");
-			if(str){
-				var arr=str.split(",");
-				(this).pages=arr;
-			}
+		var cnt=0;
+		var i=0;
+		var page;
+		if ((this instanceof fairygui.gears.GearDisplay )){
+			cnt=buffer.getInt16();
+			var pages=[];
+			for (i=0;i < cnt;i++)
+			pages[i]=buffer.readS();
+			(this).pages=pages;
 		}
 		else{
-			var pages;
-			var values;
-			str=xml.getAttribute("pages");
-			if(str)
-				pages=str.split(",");
-			if(pages){
-				str=xml.getAttribute("values");
-				if(str!=null)
-					values=str.split("|");
-				else
-				values=[];
-				for(var i=0;i<pages.length;i++){
-					str=values[i];
-					if(str==null)
-						str="";
-					this.addStatus(pages[i],str);
-				}
+			cnt=buffer.getInt16();
+			for (i=0;i < cnt;i++){
+				page=buffer.readS();
+				if (page==null)
+					continue ;
+				this.addStatus(page,buffer);
 			}
-			str=xml.getAttribute("default");
-			if(str)
-				this.addStatus(null,str);
+			if (buffer.readBool())
+				this.addStatus(null,buffer);
+		}
+		if (buffer.readBool()){
+			this._tweenConfig=new GearTweenConfig();
+			this._tweenConfig.easeType=buffer.readByte();
+			this._tweenConfig.duration=buffer.getFloat32();
+			this._tweenConfig.delay=buffer.getFloat32();
 		}
 	}
 
 	__proto.updateFromRelations=function(dx,dy){}
-	__proto.addStatus=function(pageId,value){}
+	__proto.addStatus=function(pageId,buffer){}
 	__proto.init=function(){}
 	__proto.apply=function(){}
 	__proto.updateState=function(){}
@@ -1792,32 +2039,34 @@ var GearBase=(function(){
 		}
 	});
 
-	__getset(0,__proto,'tween',function(){
-		return this._tween;
-		},function(val){
-		this._tween=val;
-	});
-
-	__getset(0,__proto,'delay',function(){
-		return this._delay;
-		},function(val){
-		this._delay=val;
-	});
-
-	__getset(0,__proto,'tweenTime',function(){
-		return this._tweenTime;
-		},function(value){
-		this._tweenTime=value;
-	});
-
-	__getset(0,__proto,'easeType',function(){
-		return this._easeType;
-		},function(value){
-		this._easeType=value;
+	__getset(0,__proto,'tweenConfig',function(){
+		if(this._tweenConfig==null)
+			this._tweenConfig=new GearTweenConfig();
+		return this._tweenConfig;
 	});
 
 	GearBase.disableAllTweenEffect=false;
 	return GearBase;
+})()
+
+
+//class fairygui.gears.GearTweenConfig
+var GearTweenConfig=(function(){
+	function GearTweenConfig(){
+		this.tween=false;
+		this.easeType=0;
+		this.duration=NaN;
+		this.delay=NaN;
+		this._displayLockToken=NaN;
+		this._tweener=null;
+		this.tween=true;
+		this.easeType=5;
+		this.duration=0.3;
+		this.delay=0;
+	}
+
+	__class(GearTweenConfig,'fairygui.gears.GearTweenConfig');
+	return GearTweenConfig;
 })()
 
 
@@ -1876,23 +2125,13 @@ var GObjectPool=(function(){
 })()
 
 
+/**
+*Use for GGroup.layout
+*/
 //class fairygui.GroupLayoutType
 var GroupLayoutType=(function(){
 	function GroupLayoutType(){}
 	__class(GroupLayoutType,'fairygui.GroupLayoutType');
-	GroupLayoutType.parse=function(value){
-		switch (value){
-			case "none":
-				return 0;
-			case "hz":
-				return 1;
-			case "vt":
-				return 2;
-			default :
-				return 0;
-			}
-	}
-
 	GroupLayoutType.None=0;
 	GroupLayoutType.Horizontal=1;
 	GroupLayoutType.Vertical=2;
@@ -1900,27 +2139,13 @@ var GroupLayoutType=(function(){
 })()
 
 
+/**
+*Use for GList.layout
+*/
 //class fairygui.ListLayoutType
 var ListLayoutType=(function(){
 	function ListLayoutType(){}
 	__class(ListLayoutType,'fairygui.ListLayoutType');
-	ListLayoutType.parse=function(value){
-		switch (value){
-			case "column":
-				return 0;
-			case "row":
-				return 1;
-			case "flow_hz":
-				return 2;
-			case "flow_vt":
-				return 3;
-			case "pagination":
-				return 4;
-			default :
-				return 0;
-			}
-	}
-
 	ListLayoutType.SingleColumn=0;
 	ListLayoutType.SingleRow=1;
 	ListLayoutType.FlowHorizontal=2;
@@ -1930,25 +2155,13 @@ var ListLayoutType=(function(){
 })()
 
 
+/**
+*Use for GList.selectionMode
+*/
 //class fairygui.ListSelectionMode
 var ListSelectionMode=(function(){
 	function ListSelectionMode(){}
 	__class(ListSelectionMode,'fairygui.ListSelectionMode');
-	ListSelectionMode.parse=function(value){
-		switch (value){
-			case "single":
-				return 0;
-			case "multiple":
-				return 1;
-			case "multipleSingleClick":
-				return 2;
-			case "none":
-				return 3;
-			default :
-				return 0;
-			}
-	}
-
 	ListSelectionMode.Single=0;
 	ListSelectionMode.Multiple=1;
 	ListSelectionMode.Multiple_SingleClick=2;
@@ -1957,29 +2170,13 @@ var ListSelectionMode=(function(){
 })()
 
 
+/**
+*Use for GLoader.fill
+*/
 //class fairygui.LoaderFillType
 var LoaderFillType=(function(){
 	function LoaderFillType(){}
 	__class(LoaderFillType,'fairygui.LoaderFillType');
-	LoaderFillType.parse=function(value){
-		switch (value){
-			case "none":
-				return 0;
-			case "scale":
-				return 1;
-			case "scaleMatchHeight":
-				return 2;
-			case "scaleMatchWidth":
-				return 3;
-			case "scaleFree":
-				return 4;
-			case "scaleNoBorder":
-				return 5;
-			default :
-				return 0;
-			}
-	}
-
 	LoaderFillType.None=0;
 	LoaderFillType.Scale=1;
 	LoaderFillType.ScaleMatchHeight=2;
@@ -2001,30 +2198,6 @@ var Margin=(function(){
 
 	__class(Margin,'fairygui.Margin');
 	var __proto=Margin.prototype;
-	__proto.parse=function(str){
-		if (!str){
-			this.left=0;
-			this.right=0;
-			this.top=0;
-			this.bottom=0;
-			return;
-		};
-		var arr=str.split(",");
-		if (arr.length==1){
-			var k=parseInt(arr[0]);
-			this.top=k;
-			this.bottom=k;
-			this.left=k;
-			this.right=k;
-		}
-		else {
-			this.top=parseInt(arr[0]);
-			this.bottom=parseInt(arr[1]);
-			this.left=parseInt(arr[2]);
-			this.right=parseInt(arr[3]);
-		}
-	}
-
 	__proto.copy=function(source){
 		this.top=source.top;
 		this.bottom=source.bottom;
@@ -2036,32 +2209,44 @@ var Margin=(function(){
 })()
 
 
+/**
+*Use for UIObjectFactory.newObject
+*/
+//class fairygui.ObjectType
+var ObjectType=(function(){
+	function ObjectType(){}
+	__class(ObjectType,'fairygui.ObjectType');
+	ObjectType.Image=0;
+	ObjectType.MovieClip=1;
+	ObjectType.Swf=2;
+	ObjectType.Graph=3;
+	ObjectType.Loader=4;
+	ObjectType.Group=5;
+	ObjectType.Text=6;
+	ObjectType.RichText=7;
+	ObjectType.InputText=8;
+	ObjectType.Component=9;
+	ObjectType.List=10;
+	ObjectType.Label=11;
+	ObjectType.Button=12;
+	ObjectType.ComboBox=13;
+	ObjectType.ProgressBar=14;
+	ObjectType.Slider=15;
+	ObjectType.ScrollBar=16;
+	return ObjectType;
+})()
+
+
+/**
+*Use for GComponent.overflow
+*/
 //class fairygui.OverflowType
 var OverflowType=(function(){
 	function OverflowType(){}
 	__class(OverflowType,'fairygui.OverflowType');
-	OverflowType.parse=function(value){
-		switch (value){
-			case "visible":
-				return 0;
-			case "hidden":
-				return 1;
-			case "scroll":
-				return 2;
-			case "scale":
-				return 3;
-			case "scaleFree":
-				return 4;
-			default :
-				return 0;
-			}
-	}
-
 	OverflowType.Visible=0;
 	OverflowType.Hidden=1;
 	OverflowType.Scroll=2;
-	OverflowType.Scale=3;
-	OverflowType.ScaleFree=4;
 	return OverflowType;
 })()
 
@@ -2071,29 +2256,28 @@ var PackageItem=(function(){
 	function PackageItem(){
 		this.owner=null;
 		this.type=0;
+		this.objectType=0;
 		this.id=null;
 		this.name=null;
 		this.width=0;
 		this.height=0;
 		this.file=null;
 		this.decoded=false;
+		this.rawData=null;
 		//image
 		this.scale9Grid=null;
 		this.scaleByTile=false;
 		this.tileGridIndice=0;
 		this.smoothing=false;
 		this.texture=null;
+		this.pixelHitTestData=null;
 		//movieclip
 		this.interval=0;
 		this.repeatDelay=0;
 		this.swing=false;
 		this.frames=null;
 		//componenet
-		this.componentData=null;
-		this.displayList=null;
 		this.extensionType=null;
-		//sound
-		this.sound=null;
 		//font
 		this.bitmapFont=null;
 	}
@@ -2116,34 +2300,15 @@ var PackageItem=(function(){
 var PackageItemType=(function(){
 	function PackageItemType(){}
 	__class(PackageItemType,'fairygui.PackageItemType');
-	PackageItemType.parse=function(value){
-		switch(value){
-			case "image":
-				return 0;
-			case "movieclip":
-				return 2;
-			case "sound":
-				return 3;
-			case "component":
-				return 4;
-			case "swf":
-				return 1;
-			case "font":
-				return 6;
-			case "atlas":
-				return 7;
-			}
-		return 0;
-	}
-
 	PackageItemType.Image=0;
-	PackageItemType.Swf=1;
-	PackageItemType.MovieClip=2;
-	PackageItemType.Sound=3;
-	PackageItemType.Component=4;
-	PackageItemType.Misc=5;
-	PackageItemType.Font=6;
-	PackageItemType.Atlas=7;
+	PackageItemType.MovieClip=1;
+	PackageItemType.Sound=2;
+	PackageItemType.Component=3;
+	PackageItemType.Atlas=4;
+	PackageItemType.Font=5;
+	PackageItemType.Swf=6;
+	PackageItemType.Misc=7;
+	PackageItemType.Unknown=8;
 	return PackageItemType;
 })()
 
@@ -2190,6 +2355,20 @@ var PageOption=(function(){
 	});
 
 	return PageOption;
+})()
+
+
+/**
+*Use for GComboBox.popupDirection
+*/
+//class fairygui.PopupDirection
+var PopupDirection=(function(){
+	function PopupDirection(){}
+	__class(PopupDirection,'fairygui.PopupDirection');
+	PopupDirection.Auto=0;
+	PopupDirection.Up=1;
+	PopupDirection.Down=2;
+	return PopupDirection;
 })()
 
 
@@ -2366,25 +2545,13 @@ var PopupMenu=(function(){
 })()
 
 
+/**
+*Use for GProgressBar.titleType and GSlider.titleType
+*/
 //class fairygui.ProgressTitleType
 var ProgressTitleType=(function(){
 	function ProgressTitleType(){}
 	__class(ProgressTitleType,'fairygui.ProgressTitleType');
-	ProgressTitleType.parse=function(value){
-		switch (value){
-			case "percent":
-				return 0;
-			case "valueAndmax":
-				return 1;
-			case "value":
-				return 2;
-			case "max":
-				return 3;
-			default :
-				return 0;
-			}
-	}
-
 	ProgressTitleType.Percent=0;
 	ProgressTitleType.ValueAndMax=1;
 	ProgressTitleType.Value=2;
@@ -2416,10 +2583,9 @@ var RelationItem=(function(){
 			this.add(15,usePercent);
 			return;
 		};
-		var length=this._defs.length;
-		for (var i=0;i < length;i++){
-			var def=this._defs[i];
-			if (def.type==relationType)
+		var cnt=this._defs.length;
+		for(var i=0;i<cnt;i++){
+			if (this._defs[i].type==relationType)
 				return;
 		}
 		this.internalAdd(relationType,usePercent);
@@ -2434,6 +2600,7 @@ var RelationItem=(function(){
 		var info=new RelationDef();
 		info.percent=usePercent;
 		info.type=relationType;
+		info.axis=(relationType <=6 || relationType==14 || relationType >=16 && relationType <=19)? 0 :1;
 		this._defs.push(info);
 		if (usePercent || relationType==1 || relationType==3 || relationType==5
 			|| relationType==8 || relationType==10 || relationType==12)
@@ -2441,7 +2608,6 @@ var RelationItem=(function(){
 	}
 
 	__proto.remove=function(relationType){
-		(relationType===void 0)&& (relationType=0);
 		if (relationType==24){
 			this.remove(14);
 			this.remove(15);
@@ -2459,8 +2625,8 @@ var RelationItem=(function(){
 	__proto.copyFrom=function(source){
 		this.target=source.target;
 		this._defs.length=0;
-		var length=source._defs.length;
-		for (var i=0;i < length;i++){
+		var cnt=source._defs.length;
+		for(var i=0;i<cnt;i++){
 			var info=source._defs[i];
 			var info2=new RelationDef();
 			info2.copyFrom(info);
@@ -2475,47 +2641,49 @@ var RelationItem=(function(){
 		}
 	}
 
-	__proto.applyOnSelfResized=function(dWidth,dHeight){
+	__proto.applyOnSelfResized=function(dWidth,dHeight,applyPivot){
+		var cnt=this._defs.length;
+		if(cnt==0)
+			return;
 		var ox=this._owner.x;
 		var oy=this._owner.y;
-		var length=this._defs.length;
-		for (var i=0;i < length;i++){
+		for (var i=0;i < cnt;i++){
 			var info=this._defs[i];
 			switch (info.type){
 				case 3:
-				case 5:
-					this._owner.x-=dWidth / 2;
+					this._owner.x-=(0.5-(applyPivot ? this._owner.pivotX :0))*dWidth;
 					break ;
+				case 5:
 				case 4:
 				case 6:
-					this._owner.x-=dWidth;
+					this._owner.x-=(1-(applyPivot ? this._owner.pivotX :0))*dWidth;
 					break ;
 				case 10:
-				case 12:
-					this._owner.y-=dHeight / 2;
+					this._owner.y-=(0.5-(applyPivot ? this._owner.pivotY :0))*dHeight;
 					break ;
+				case 12:
 				case 11:
 				case 13:
-					this._owner.y-=dHeight;
+					this._owner.y-=(1-(applyPivot ? this._owner.pivotY :0))*dHeight;
 					break ;
 				}
 		}
-		if (ox !=this._owner.x || oy !=this._owner.y){
+		if (ox!=this._owner.x || oy!=this._owner.y){
 			ox=this._owner.x-ox;
 			oy=this._owner.y-oy;
 			this._owner.updateGearFromRelations(1,ox,oy);
-			if(this._owner.parent !=null){
-				var len=this._owner.parent._transitions.length;
-				if(len > 0){
-					for(i=0;i < len;++i){
-						this._owner.parent._transitions[i].updateFromRelations(this._owner.id,ox,oy);
-					}
+			if (this._owner.parent !=null && this._owner.parent._transitions.length > 0){
+				cnt=this._owner.parent._transitions.length;
+				for(var j=0;j<cnt;j++){
+					var trans=this._owner.parent._transitions[j];
+					trans.updateFromRelations(this._owner.id,ox,oy);
 				}
 			}
 		}
 	}
 
 	__proto.applyOnXYChanged=function(info,dx,dy){
+		var tmp=NaN;
 		switch (info.type){
 			case 0:
 			case 1:
@@ -2540,200 +2708,296 @@ var RelationItem=(function(){
 				break ;
 			case 16:
 			case 17:
-				this._owner.x+=dx;
+				tmp=this._owner.xMin;
 				this._owner.width=this._owner._rawWidth-dx;
+				this._owner.xMin=tmp+dx;
 				break ;
 			case 18:
 			case 19:
+				tmp=this._owner.xMin;
 				this._owner.width=this._owner._rawWidth+dx;
+				this._owner.xMin=tmp;
 				break ;
 			case 20:
 			case 21:
-				this._owner.y+=dy;
+				tmp=this._owner.yMin;
 				this._owner.height=this._owner._rawHeight-dy;
+				this._owner.yMin=tmp+dy;
 				break ;
 			case 22:
 			case 23:
+				tmp=this._owner.yMin;
 				this._owner.height=this._owner._rawHeight+dy;
+				this._owner.yMin=tmp;
 				break ;
 			}
 	}
 
 	__proto.applyOnSizeChanged=function(info){
-		var targetX=NaN,targetY=NaN;
-		if (this._target !=this._owner.parent){
-			targetX=this._target.x;
-			targetY=this._target.y;
-		}
-		else {
-			targetX=0;
-			targetY=0;
-		};
+		var pos=0,pivot=0,delta=0;
 		var v=NaN,tmp=NaN;
+		if (info.axis==0){
+			if (this._target !=this._owner.parent){
+				pos=this._target.x;
+				if (this._target.pivotAsAnchor)
+					pivot=this._target.pivotX;
+			}
+			if (info.percent){
+				if (this._targetWidth !=0)
+					delta=this._target._width / this._targetWidth;
+			}
+			else
+			delta=this._target._width-this._targetWidth;
+		}
+		else{
+			if (this._target !=this._owner.parent){
+				pos=this._target.y;
+				if (this._target.pivotAsAnchor)
+					pivot=this._target.pivotY;
+			}
+			if (info.percent){
+				if (this._targetHeight !=0)
+					delta=this._target._height / this._targetHeight;
+			}
+			else
+			delta=this._target._height-this._targetHeight;
+		}
 		switch (info.type){
 			case 0:
-				if(info.percent && this._target==this._owner.parent){
-					v=this._owner.x-targetX;
-					if (info.percent)
-						v=v / this._targetWidth *this._target._width;
-					this._owner.x=targetX+v;
-				}
+				if (info.percent)
+					this._owner.xMin=pos+(this._owner.xMin-pos)*delta;
+				else if (pivot !=0)
+				this._owner.x+=delta *(-pivot);
 				break ;
 			case 1:
-				v=this._owner.x-(targetX+this._targetWidth / 2);
 				if (info.percent)
-					v=v / this._targetWidth *this._target._width;
-				this._owner.x=targetX+this._target._width / 2+v;
+					this._owner.xMin=pos+(this._owner.xMin-pos)*delta;
+				else
+				this._owner.x+=delta *(0.5-pivot);
 				break ;
 			case 2:
-				v=this._owner.x-(targetX+this._targetWidth);
 				if (info.percent)
-					v=v / this._targetWidth *this._target._width;
-				this._owner.x=targetX+this._target._width+v;
+					this._owner.xMin=pos+(this._owner.xMin-pos)*delta;
+				else
+				this._owner.x+=delta *(1-pivot);
 				break ;
 			case 3:
-				v=this._owner.x+this._owner._rawWidth / 2-(targetX+this._targetWidth / 2);
 				if (info.percent)
-					v=v / this._targetWidth *this._target._width;
-				this._owner.x=targetX+this._target._width / 2+v-this._owner._rawWidth / 2;
+					this._owner.xMin=pos+(this._owner.xMin+this._owner._rawWidth *0.5-pos)*delta-this._owner._rawWidth *0.5;
+				else
+				this._owner.x+=delta *(0.5-pivot);
 				break ;
 			case 4:
-				v=this._owner.x+this._owner._rawWidth-targetX;
 				if (info.percent)
-					v=v / this._targetWidth *this._target._width;
-				this._owner.x=targetX+v-this._owner._rawWidth;
+					this._owner.xMin=pos+(this._owner.xMin+this._owner._rawWidth-pos)*delta-this._owner._rawWidth;
+				else if (pivot !=0)
+				this._owner.x+=delta *(-pivot);
 				break ;
 			case 5:
-				v=this._owner.x+this._owner._rawWidth-(targetX+this._targetWidth / 2);
 				if (info.percent)
-					v=v / this._targetWidth *this._target._width;
-				this._owner.x=targetX+this._target._width / 2+v-this._owner._rawWidth;
+					this._owner.xMin=pos+(this._owner.xMin+this._owner._rawWidth-pos)*delta-this._owner._rawWidth;
+				else
+				this._owner.x+=delta *(0.5-pivot);
 				break ;
 			case 6:
-				v=this._owner.x+this._owner._rawWidth-(targetX+this._targetWidth);
 				if (info.percent)
-					v=v / this._targetWidth *this._target._width;
-				this._owner.x=targetX+this._target._width+v-this._owner._rawWidth;
+					this._owner.xMin=pos+(this._owner.xMin+this._owner._rawWidth-pos)*delta-this._owner._rawWidth;
+				else
+				this._owner.x+=delta *(1-pivot);
 				break ;
 			case 7:
-				if(info.percent && this._target==this._owner.parent){
-					v=this._owner.y-targetY;
-					if (info.percent)
-						v=v / this._targetHeight *this._target._height;
-					this._owner.y=targetY+v;
-				}
+				if (info.percent)
+					this._owner.yMin=pos+(this._owner.yMin-pos)*delta;
+				else if (pivot !=0)
+				this._owner.y+=delta *(-pivot);
 				break ;
 			case 8:
-				v=this._owner.y-(targetY+this._targetHeight / 2);
 				if (info.percent)
-					v=v / this._targetHeight *this._target._height;
-				this._owner.y=targetY+this._target._height / 2+v;
+					this._owner.yMin=pos+(this._owner.yMin-pos)*delta;
+				else
+				this._owner.y+=delta *(0.5-pivot);
 				break ;
 			case 9:
-				v=this._owner.y-(targetY+this._targetHeight);
 				if (info.percent)
-					v=v / this._targetHeight *this._target._height;
-				this._owner.y=targetY+this._target._height+v;
+					this._owner.yMin=pos+(this._owner.yMin-pos)*delta;
+				else
+				this._owner.y+=delta *(1-pivot);
 				break ;
 			case 10:
-				v=this._owner.y+this._owner._rawHeight / 2-(targetY+this._targetHeight / 2);
 				if (info.percent)
-					v=v / this._targetHeight *this._target._height;
-				this._owner.y=targetY+this._target._height / 2+v-this._owner._rawHeight / 2;
+					this._owner.yMin=pos+(this._owner.yMin+this._owner._rawHeight *0.5-pos)*delta-this._owner._rawHeight *0.5;
+				else
+				this._owner.y+=delta *(0.5-pivot);
 				break ;
 			case 11:
-				v=this._owner.y+this._owner._rawHeight-targetY;
 				if (info.percent)
-					v=v / this._targetHeight *this._target._height;
-				this._owner.y=targetY+v-this._owner._rawHeight;
+					this._owner.yMin=pos+(this._owner.yMin+this._owner._rawHeight-pos)*delta-this._owner._rawHeight;
+				else if (pivot !=0)
+				this._owner.y+=delta *(-pivot);
 				break ;
 			case 12:
-				v=this._owner.y+this._owner._rawHeight-(targetY+this._targetHeight / 2);
 				if (info.percent)
-					v=v / this._targetHeight *this._target._height;
-				this._owner.y=targetY+this._target._height / 2+v-this._owner._rawHeight;
+					this._owner.yMin=pos+(this._owner.yMin+this._owner._rawHeight-pos)*delta-this._owner._rawHeight;
+				else
+				this._owner.y+=delta *(0.5-pivot);
 				break ;
 			case 13:
-				v=this._owner.y+this._owner._rawHeight-(targetY+this._targetHeight);
 				if (info.percent)
-					v=v / this._targetHeight *this._target._height;
-				this._owner.y=targetY+this._target._height+v-this._owner._rawHeight;
+					this._owner.yMin=pos+(this._owner.yMin+this._owner._rawHeight-pos)*delta-this._owner._rawHeight;
+				else
+				this._owner.y+=delta *(1-pivot);
 				break ;
 			case 14:
-				if(this._owner._underConstruct && this._owner==this._target.parent)
+				if (this._owner._underConstruct && this._owner==this._target.parent)
 					v=this._owner.sourceWidth-this._target.initWidth;
 				else
 				v=this._owner._rawWidth-this._targetWidth;
 				if (info.percent)
-					v=v / this._targetWidth *this._target._width;
-				if(this._target==this._owner.parent)
+					v=v *delta;
+				if (this._target==this._owner.parent){
+					if (this._owner.pivotAsAnchor){
+						tmp=this._owner.xMin;
+						this._owner.setSize(this._target._width+v,this._owner._rawHeight,true);
+						this._owner.xMin=tmp;
+					}
+					else
 					this._owner.setSize(this._target._width+v,this._owner._rawHeight,true);
+				}
 				else
 				this._owner.width=this._target._width+v;
 				break ;
 			case 15:
-				if(this._owner._underConstruct && this._owner==this._target.parent)
+				if (this._owner._underConstruct && this._owner==this._target.parent)
 					v=this._owner.sourceHeight-this._target.initHeight;
 				else
 				v=this._owner._rawHeight-this._targetHeight;
 				if (info.percent)
-					v=v / this._targetHeight *this._target._height;
-				if(this._target==this._owner.parent)
+					v=v *delta;
+				if (this._target==this._owner.parent){
+					if (this._owner.pivotAsAnchor){
+						tmp=this._owner.yMin;
+						this._owner.setSize(this._owner._rawWidth,this._target._height+v,true);
+						this._owner.yMin=tmp;
+					}
+					else
 					this._owner.setSize(this._owner._rawWidth,this._target._height+v,true);
+				}
 				else
 				this._owner.height=this._target._height+v;
 				break ;
 			case 16:
+				tmp=this._owner.xMin;
+				if (info.percent)
+					v=pos+(tmp-pos)*delta-tmp;
+				else
+				v=delta *(-pivot);
+				this._owner.width=this._owner._rawWidth-v;
+				this._owner.xMin=tmp+v;
 				break ;
 			case 17:
-				v=this._owner.x-(targetX+this._targetWidth);
+				tmp=this._owner.xMin;
 				if (info.percent)
-					v=v / this._targetWidth *this._target._width;
-				tmp=this._owner.x;
-				this._owner.x=targetX+this._target._width+v;
-				this._owner.width=this._owner._rawWidth-(this._owner.x-tmp);
+					v=pos+(tmp-pos)*delta-tmp;
+				else
+				v=delta *(1-pivot);
+				this._owner.width=this._owner._rawWidth-v;
+				this._owner.xMin=tmp+v;
 				break ;
 			case 18:
+				tmp=this._owner.xMin;
+				if (info.percent)
+					v=pos+(tmp+this._owner._rawWidth-pos)*delta-(tmp+this._owner._rawWidth);
+				else
+				v=delta *(-pivot);
+				this._owner.width=this._owner._rawWidth+v;
+				this._owner.xMin=tmp;
 				break ;
 			case 19:
-				if(this._owner._underConstruct && this._owner==this._target.parent)
-					v=this._owner.sourceWidth-(targetX+this._target.initWidth);
-				else
-				v=this._owner.width-(targetX+this._targetWidth);
-				if (this._owner !=this._target.parent)
-					v+=this._owner.x;
-				if (info.percent)
-					v=v / this._targetWidth *this._target._width;
-				if (this._owner !=this._target.parent)
-					this._owner.width=targetX+this._target._width+v-this._owner.x;
-				else
-				this._owner.width=targetX+this._target._width+v;
+				tmp=this._owner.xMin;
+				if (info.percent){
+					if (this._owner==this._target.parent){
+						if (this._owner._underConstruct)
+							this._owner.width=pos+this._target._width-this._target._width *pivot+
+						(this._owner.sourceWidth-pos-this._target.initWidth+this._target.initWidth *pivot)*delta;
+						else
+						this._owner.width=pos+(this._owner._rawWidth-pos)*delta;
+					}
+					else{
+						v=pos+(tmp+this._owner._rawWidth-pos)*delta-(tmp+this._owner._rawWidth);
+						this._owner.width=this._owner._rawWidth+v;
+						this._owner.xMin=tmp;
+					}
+				}
+				else{
+					if (this._owner==this._target.parent){
+						if (this._owner._underConstruct)
+							this._owner.width=this._owner.sourceWidth+(this._target._width-this._target.initWidth)*(1-pivot);
+						else
+						this._owner.width=this._owner._rawWidth+delta *(1-pivot);
+					}
+					else{
+						v=delta *(1-pivot);
+						this._owner.width=this._owner._rawWidth+v;
+						this._owner.xMin=tmp;
+					}
+				}
 				break ;
 			case 20:
+				tmp=this._owner.yMin;
+				if (info.percent)
+					v=pos+(tmp-pos)*delta-tmp;
+				else
+				v=delta *(-pivot);
+				this._owner.height=this._owner._rawHeight-v;
+				this._owner.yMin=tmp+v;
 				break ;
 			case 21:
-				v=this._owner.y-(targetY+this._targetHeight);
+				tmp=this._owner.yMin;
 				if (info.percent)
-					v=v / this._targetHeight *this._target._height;
-				tmp=this._owner.y;
-				this._owner.y=targetY+this._target._height+v;
-				this._owner.height=this._owner._rawHeight-(this._owner.y-tmp);
+					v=pos+(tmp-pos)*delta-tmp;
+				else
+				v=delta *(1-pivot);
+				this._owner.height=this._owner._rawHeight-v;
+				this._owner.yMin=tmp+v;
 				break ;
 			case 22:
+				tmp=this._owner.yMin;
+				if (info.percent)
+					v=pos+(tmp+this._owner._rawHeight-pos)*delta-(tmp+this._owner._rawHeight);
+				else
+				v=delta *(-pivot);
+				this._owner.height=this._owner._rawHeight+v;
+				this._owner.yMin=tmp;
 				break ;
 			case 23:
-				if(this._owner._underConstruct && this._owner==this._target.parent)
-					v=this._owner.sourceHeight-(targetY+this._target.initHeight);
-				else
-				v=this._owner._rawHeight-(targetY+this._targetHeight);
-				if (this._owner !=this._target.parent)
-					v+=this._owner.y;
-				if (info.percent)
-					v=v / this._targetHeight *this._target._height;
-				if (this._owner !=this._target.parent)
-					this._owner.height=targetY+this._target._height+v-this._owner.y;
-				else
-				this._owner.height=targetY+this._target._height+v;
+				tmp=this._owner.yMin;
+				if (info.percent){
+					if (this._owner==this._target.parent){
+						if (this._owner._underConstruct)
+							this._owner.height=pos+this._target._height-this._target._height *pivot+
+						(this._owner.sourceHeight-pos-this._target.initHeight+this._target.initHeight *pivot)*delta;
+						else
+						this._owner.height=pos+(this._owner._rawHeight-pos)*delta;
+					}
+					else{
+						v=pos+(tmp+this._owner._rawHeight-pos)*delta-(tmp+this._owner._rawHeight);
+						this._owner.height=this._owner._rawHeight+v;
+						this._owner.yMin=tmp;
+					}
+				}
+				else{
+					if (this._owner==this._target.parent){
+						if (this._owner._underConstruct)
+							this._owner.height=this._owner.sourceHeight+(this._target._height-this._target.initHeight)*(1-pivot);
+						else
+						this._owner.height=this._owner._rawHeight+delta *(1-pivot);
+					}
+					else{
+						v=delta *(1-pivot);
+						this._owner.height=this._owner._rawHeight+v;
+						this._owner.yMin=tmp;
+					}
+				}
 				break ;
 			}
 	}
@@ -2755,69 +3019,68 @@ var RelationItem=(function(){
 		target.off("fui_size_delay_change",this,this.__targetSizeWillChange);
 	}
 
-	__proto.__targetXYChanged=function(){
-		if (this._owner.relations.handling !=null || this._owner.group!=null && this._owner.group._updating){
+	__proto.__targetXYChanged=function(target){
+		if (this._owner.relations.handling!=null || this._owner.group!=null && this._owner.group._updating){
 			this._targetX=this._target.x;
 			this._targetY=this._target.y;
 			return;
 		}
-		this._owner.relations.handling=this._target;
+		this._owner.relations.handling=target;
 		var ox=this._owner.x;
 		var oy=this._owner.y;
 		var dx=this._target.x-this._targetX;
 		var dy=this._target.y-this._targetY;
-		var length=this._defs.length;
-		for (var i=0;i < length;i++){
-			var info=this._defs[i];
-			this.applyOnXYChanged(info,dx,dy);
+		var cnt=this._defs.length;
+		for(var i=0;i<cnt;i++){
+			this.applyOnXYChanged(this._defs[i],dx,dy);
 		}
 		this._targetX=this._target.x;
 		this._targetY=this._target.y;
-		if (ox !=this._owner.x || oy !=this._owner.y){
+		if (ox!=this._owner.x || oy!=this._owner.y){
 			ox=this._owner.x-ox;
 			oy=this._owner.y-oy;
 			this._owner.updateGearFromRelations(1,ox,oy);
-			if(this._owner.parent !=null){
-				var len=this._owner.parent._transitions.length;
-				if(len > 0){
-					for(i=0;i < len;++i){
-						this._owner.parent._transitions[i].updateFromRelations(this._owner.id,ox,oy);
-					}
+			if (this._owner.parent !=null && this._owner.parent._transitions.length > 0){
+				cnt=this._owner.parent._transitions.length;
+				for(var j=0;j<cnt;j++){
+					var trans=this._owner.parent._transitions[j];
+					trans.updateFromRelations(this._owner.id,ox,oy);
 				}
 			}
 		}
 		this._owner.relations.handling=null;
 	}
 
-	__proto.__targetSizeChanged=function(){
-		if (this._owner.relations.handling !=null)
+	__proto.__targetSizeChanged=function(target){
+		if (this._owner.relations.handling!=null){
+			this._targetWidth=this._target._width;
+			this._targetHeight=this._target._height;
 			return;
-		this._owner.relations.handling=this._target;
+		}
+		this._owner.relations.handling=target;
 		var ox=this._owner.x;
 		var oy=this._owner.y;
 		var ow=this._owner._rawWidth;
 		var oh=this._owner._rawHeight;
-		var length=this._defs.length;
-		for (var i=0;i < length;i++){
-			var info=this._defs[i];
-			this.applyOnSizeChanged(info);
+		var cnt=this._defs.length;
+		for(var i=0;i<cnt;i++){
+			this.applyOnSizeChanged(this._defs[i]);
 		}
 		this._targetWidth=this._target._width;
 		this._targetHeight=this._target._height;
-		if (ox !=this._owner.x || oy !=this._owner.y){
+		if (ox!=this._owner.x || oy!=this._owner.y){
 			ox=this._owner.x-ox;
 			oy=this._owner.y-oy;
 			this._owner.updateGearFromRelations(1,ox,oy);
-			if(this._owner.parent !=null){
-				var len=this._owner.parent._transitions.length;
-				if(len > 0){
-					for(i=0;i < len;++i){
-						this._owner.parent._transitions[i].updateFromRelations(this._owner.id,ox,oy);
-					}
+			if (this._owner.parent !=null && this._owner.parent._transitions.length > 0){
+				cnt=this._owner.parent._transitions.length;
+				for(var j=0;j<cnt;j++){
+					var trans=this._owner.parent._transitions[j];
+					trans.updateFromRelations(this._owner.id,ox,oy);
 				}
 			}
 		}
-		if(ow !=this._owner._rawWidth || oh !=this._owner._rawHeight){
+		if (ow!=this._owner._rawWidth || oh!=this._owner._rawHeight){
 			ow=this._owner._rawWidth-ow;
 			oh=this._owner._rawHeight-oh;
 			this._owner.updateGearFromRelations(2,ow,oh);
@@ -2825,7 +3088,7 @@ var RelationItem=(function(){
 		this._owner.relations.handling=null;
 	}
 
-	__proto.__targetSizeWillChange=function(){
+	__proto.__targetSizeWillChange=function(target){
 		this._owner.relations.sizeDirty=true;
 	}
 
@@ -2836,11 +3099,11 @@ var RelationItem=(function(){
 	__getset(0,__proto,'target',function(){
 		return this._target;
 		},function(value){
-		if (this._target !=value){
-			if (this._target)
+		if(this._target!=value){
+			if(this._target)
 				this.releaseRefTarget(this._target);
 			this._target=value;
-			if (this._target)
+			if(this._target)
 				this.addRefTarget(this._target);
 		}
 	});
@@ -2854,13 +3117,15 @@ var RelationItem=(function(){
 		RelationDef=(function(){
 			function RelationDef(){
 				this.percent=false;
-				this.type=NaN;
+				this.type=0;
+				this.axis=0;
 			}
 			__class(RelationDef,'');
 			var __proto=RelationDef.prototype;
 			__proto.copyFrom=function(source){
 				this.percent=source.percent;
 				this.type=source.type;
+				this.axis=source.axis;
 			}
 			return RelationDef;
 		})()
@@ -2896,34 +3161,6 @@ var Relations=(function(){
 		var newItem=new RelationItem(this._owner);
 		newItem.target=target;
 		newItem.add(relationType,usePercent);
-		this._items.push(newItem);
-	}
-
-	__proto.addItems=function(target,sidePairs){
-		var arr=sidePairs.split(",");
-		var s;
-		var usePercent=false;
-		var i=NaN;
-		var newItem=new RelationItem(this._owner);
-		newItem.target=target;
-		for (i=0;i < 2;i++){
-			s=arr[i];
-			if (!s)
-				continue ;
-			if (s.charAt(s.length-1)=="%"){
-				s=s.substr(0,s.length-1);
-				usePercent=true;
-			}
-			else
-			usePercent=false;
-			var j=s.indexOf("-");
-			if (j==-1)
-				s=s+"-"+s;
-			var t=fairygui.Relations.RELATION_NAMES.indexOf(s);
-			if (t==-1)
-				throw "invalid relation type";
-			newItem.internalAdd(t,usePercent);
-		}
 		this._items.push(newItem);
 	}
 
@@ -2998,13 +3235,13 @@ var Relations=(function(){
 		this.clearAll();
 	}
 
-	__proto.onOwnerSizeChanged=function(dWidth,dHeight){
+	__proto.onOwnerSizeChanged=function(dWidth,dHeight,applyPivot){
 		if (this._items.length==0)
 			return;
 		var length=this._items.length;
 		for (var i=0;i < length;i++){
 			var item=this._items[i];
-			item.applyOnSelfResized(dWidth,dHeight);
+			item.applyOnSelfResized(dWidth,dHeight,applyPivot);
 		}
 	}
 
@@ -3019,27 +3256,26 @@ var Relations=(function(){
 		}
 	}
 
-	__proto.setup=function(xml){
-		var col=xml.childNodes;
-		var length=col.length;
-		var targetId;
+	__proto.setup=function(buffer,parentToChild){
+		var cnt=buffer.readByte();
 		var target;
-		for (var i=0;i < length;i++){
-			var cxml=col[i];
-			if(cxml.nodeName!="relation")
-				continue ;
-			targetId=cxml.getAttribute("target");
-			if (this._owner.parent){
-				if (targetId)
-					target=this._owner.parent.getChildById(targetId);
-				else
+		for (var i=0;i < cnt;i++){
+			var targetIndex=buffer.getInt16();
+			if (targetIndex==-1)
 				target=this._owner.parent;
+			else if (parentToChild)
+			target=(this._owner).getChildAt(targetIndex);
+			else
+			target=this._owner.parent.getChildAt(targetIndex);
+			var newItem=new RelationItem(this._owner);
+			newItem.target=target;
+			this._items.push(newItem);
+			var cnt2=buffer.readByte();
+			for (var j=0;j < cnt2;j++){
+				var rt=buffer.readByte();
+				var usePercent=buffer.readBool();
+				newItem.internalAdd(rt,usePercent);
 			}
-			else {
-				target=(this._owner).getChildById(targetId);
-			}
-			if (target)
-				this.addItems(target,cxml.getAttribute("sidePair"));
 		}
 	}
 
@@ -3047,34 +3283,6 @@ var Relations=(function(){
 		return this._items.length==0;
 	});
 
-	__static(Relations,
-	['RELATION_NAMES',function(){return this.RELATION_NAMES=
-		[
-		"left-left",
-		"left-center",
-		"left-right",
-		"center-center",
-		"right-left",
-		"right-center",
-		"right-right",
-		"top-top",
-		"top-middle",
-		"top-bottom",
-		"middle-middle",
-		"bottom-top",
-		"bottom-middle",
-		"bottom-bottom",
-		"width-width",
-		"height-height",
-		"leftext-left",
-		"leftext-right",
-		"rightext-left",
-		"rightext-right",
-		"topext-top",
-		"topext-bottom",
-		"bottomext-top",
-		"bottomext-bottom"];}
-	]);
 	return Relations;
 })()
 
@@ -3116,21 +3324,6 @@ var RelationType=(function(){
 var ScrollBarDisplayType=(function(){
 	function ScrollBarDisplayType(){}
 	__class(ScrollBarDisplayType,'fairygui.ScrollBarDisplayType');
-	ScrollBarDisplayType.parse=function(value){
-		switch (value){
-			case "default":
-				return 0;
-			case "visible":
-				return 1;
-			case "auto":
-				return 2;
-			case "hidden":
-				return 3;
-			default :
-				return 0;
-			}
-	}
-
 	ScrollBarDisplayType.Default=0;
 	ScrollBarDisplayType.Visible=1;
 	ScrollBarDisplayType.Auto=2;
@@ -3141,7 +3334,7 @@ var ScrollBarDisplayType=(function(){
 
 //class fairygui.ScrollPane
 var ScrollPane=(function(){
-	function ScrollPane(owner,scrollType,scrollBarMargin,scrollBarDisplay,flags,vtScrollBarRes,hzScrollBarRes,headerRes,footerRes){
+	function ScrollPane(owner){
 		this._owner=null;
 		this._container=null;
 		this._maskContainer=null;
@@ -3202,11 +3395,50 @@ var ScrollPane=(function(){
 		this._container=this._owner._container;
 		this._container.pos(0,0);
 		this._maskContainer.addChild(this._container);
-		this._scrollBarMargin=scrollBarMargin;
-		this._scrollType=scrollType;
+		this._scrollBarVisible=true;
+		this._mouseWheelEnabled=true;
+		this._xPos=0;
+		this._yPos=0;
+		this._aniFlag=0;
+		this._footerLockedSize=0;
+		this._headerLockedSize=0;
+		this._scrollBarMargin=new Margin();
+		this._viewSize=new Point();
+		this._contentSize=new Point();
+		this._pageSize=new Point(1,1);
+		this._overlapSize=new Point();
+		this._tweenTime=new Point();
+		this._tweenStart=new Point();
+		this._tweenDuration=new Point();
+		this._tweenChange=new Point();
+		this._velocity=new Point();
+		this._containerPos=new Point();
+		this._beginTouchPos=new Point();
+		this._lastTouchPos=new Point();
+		this._lastTouchGlobalPos=new Point();
 		this._scrollStep=UIConfig$1.defaultScrollStep;
 		this._mouseWheelStep=this._scrollStep*2;
 		this._decelerationRate=UIConfig$1.defaultScrollDecelerationRate;
+		this._owner.on("mousedown",this,this.__mouseDown);
+		this._owner.on("mousewheel",this,this.__mouseWheel);
+	}
+
+	__class(ScrollPane,'fairygui.ScrollPane');
+	var __proto=ScrollPane.prototype;
+	__proto.setup=function(buffer){
+		this._scrollType=buffer.readByte();
+		var scrollBarDisplay=buffer.readByte();
+		var flags=buffer.getInt32();
+		if (buffer.readBool()){
+			this._scrollBarMargin.top=buffer.getInt32();
+			this._scrollBarMargin.bottom=buffer.getInt32();
+			this._scrollBarMargin.left=buffer.getInt32();
+			this._scrollBarMargin.right=buffer.getInt32();
+		};
+		var vtScrollBarRes=buffer.readS();
+		var hzScrollBarRes=buffer.readS();
+		var headerRes=buffer.readS();
+		var footerRes=buffer.readS();
 		this._displayOnLeft=(flags & 1)!=0;
 		this._snapToItem=(flags & 2)!=0;
 		this._displayInDemand=(flags & 4)!=0;
@@ -3226,28 +3458,8 @@ var ScrollPane=(function(){
 		this._inertiaDisabled=(flags & 256)!=0;
 		if((flags & 512)==0)
 			this._maskContainer.scrollRect=new Rectangle();
-		this._scrollBarVisible=true;
-		this._mouseWheelEnabled=true;
-		this._xPos=0;
-		this._yPos=0;
-		this._aniFlag=0;
-		this._footerLockedSize=0;
-		this._headerLockedSize=0;
 		if(scrollBarDisplay==0)
 			scrollBarDisplay=UIConfig$1.defaultScrollBarDisplay;
-		this._viewSize=new Point();
-		this._contentSize=new Point();
-		this._pageSize=new Point(1,1);
-		this._overlapSize=new Point();
-		this._tweenTime=new Point();
-		this._tweenStart=new Point();
-		this._tweenDuration=new Point();
-		this._tweenChange=new Point();
-		this._velocity=new Point();
-		this._containerPos=new Point();
-		this._beginTouchPos=new Point();
-		this._lastTouchPos=new Point();
-		this._lastTouchGlobalPos=new Point();
 		if(scrollBarDisplay !=3){
 			if(this._scrollType==2 || this._scrollType==1){
 				var res=vtScrollBarRes ? vtScrollBarRes :UIConfig$1.verticalScrollBar;
@@ -3292,13 +3504,9 @@ var ScrollPane=(function(){
 		}
 		if (this._header !=null || this._footer !=null)
 			this._refreshBarAxis=(this._scrollType==2 || this._scrollType==1)? "y" :"x";
-		this.setSize(owner.width,owner.height);
-		this._owner.on("mousedown",this,this.__mouseDown);
-		this._owner.on("mousewheel",this,this.__mouseWheel);
+		this.setSize(this.owner.width,this.owner.height);
 	}
 
-	__class(ScrollPane,'fairygui.ScrollPane');
-	var __proto=ScrollPane.prototype;
 	__proto.dispose=function(){
 		if (this._tweening !=0)
 			Laya.timer.clear(this,this.tweenUpdate);
@@ -3347,6 +3555,16 @@ var ScrollPane=(function(){
 			this._yPos=value;
 			this.posChanged(ani);
 		}
+	}
+
+	__proto.setCurrentPageX=function(value,ani){
+		if (this._pageMode && this._overlapSize.x>0)
+			this.setPosX(value *this._pageSize.x,ani);
+	}
+
+	__proto.setCurrentPageY=function(value,ani){
+		if (this._pageMode && this._overlapSize.y>0)
+			this.setPosY(value *this._pageSize.y,ani);
 	}
 
 	__proto.scrollTop=function(ani){
@@ -3522,9 +3740,9 @@ var ScrollPane=(function(){
 	__proto.handleControllerChanged=function(c){
 		if (this._pageController==c){
 			if (this._scrollType==0)
-				this.currentPageX=c.selectedIndex;
+				this.setCurrentPageX(c.selectedIndex,true);
 			else
-			this.currentPageY=c.selectedIndex;
+			this.setCurrentPageY(c.selectedIndex,true);
 		}
 	}
 
@@ -3768,7 +3986,7 @@ var ScrollPane=(function(){
 			this._container.pos(ToolSet.clamp(this._container.x,-this._overlapSize.x,0),
 			ToolSet.clamp(this._container.y,-this._overlapSize.y,0));
 		}
-		this.syncScrollBar();
+		this.syncScrollBar(true);
 		this.checkRefreshBar();
 		if (this._pageMode)
 			this.updatePageController();
@@ -4629,8 +4847,7 @@ var ScrollPane=(function(){
 			page++;
 		return page;
 		},function(value){
-		if (this._pageMode && this._overlapSize.x>0)
-			this.setPosX(value *this._pageSize.x,false);
+		this.setCurrentPageX(value,false);
 	});
 
 	__getset(0,__proto,'currentPageY',function(){
@@ -4641,8 +4858,7 @@ var ScrollPane=(function(){
 			page++;
 		return page;
 		},function(value){
-		if (this._pageMode && this._overlapSize.y>0)
-			this.setPosY(value *this._pageSize.y,false);
+		this.setCurrentPageY(value,false);
 	});
 
 	__getset(0,__proto,'isRightMost',function(){
@@ -4683,19 +4899,6 @@ var ScrollPane=(function(){
 var ScrollType=(function(){
 	function ScrollType(){}
 	__class(ScrollType,'fairygui.ScrollType');
-	ScrollType.parse=function(value){
-		switch (value){
-			case "horizontal":
-				return 0;
-			case "vertical":
-				return 1;
-			case "both":
-				return 2;
-			default :
-				return 1;
-			}
-	}
-
 	ScrollType.Horizontal=0;
 	ScrollType.Vertical=1;
 	ScrollType.Both=2;
@@ -4705,105 +4908,168 @@ var ScrollType=(function(){
 
 //class fairygui.Transition
 var Transition=(function(){
-	var TransitionActionType,TransitionItem,TransitionValue;
+	var TransitionActionType,TransitionItem,TweenConfig,TValue_Visible,TValue_Animation,TValue_Sound,TValue_Transition,TValue_Shake,TValue_Text,TValue;
 	function Transition(owner){
 		this.name=null;
-		this.autoPlayRepeat=1;
-		this.autoPlayDelay=0;
 		this._owner=null;
-		this._ownerBaseX=0;
-		this._ownerBaseY=0;
+		this._ownerBaseX=NaN;
+		this._ownerBaseY=NaN;
 		this._items=null;
 		this._totalTimes=0;
 		this._totalTasks=0;
 		this._playing=false;
+		this._paused=false;
 		this._onComplete=null;
 		this._options=0;
 		this._reversed=false;
-		this._maxTime=0;
+		this._totalDuration=NaN;
 		this._autoPlay=false;
+		this._autoPlayTimes=0;
+		this._autoPlayDelay=NaN;
+		this._timeScale=NaN;
+		this._startTime=NaN;
+		this._endTime=NaN;
 		this.OPTION_IGNORE_DISPLAY_CONTROLLER=1;
 		this.OPTION_AUTO_STOP_DISABLED=2;
 		this.OPTION_AUTO_STOP_AT_END=4;
-		this.FRAME_RATE=24;
 		this._owner=owner;
 		this._items=[];
+		this._totalDuration=0;
+		this._autoPlayTimes=1;
+		this._autoPlayDelay=0;
+		this._timeScale=1;
+		this._startTime=0;
+		this._endTime=0;
 	}
 
 	__class(Transition,'fairygui.Transition');
 	var __proto=Transition.prototype;
-	__proto.play=function(onComplete,times,delay){
+	__proto.play=function(onComplete,times,delay,startTime,endTime){
 		(times===void 0)&& (times=1);
 		(delay===void 0)&& (delay=0);
-		this._play(onComplete,times,delay,false);
+		(startTime===void 0)&& (startTime=0);
+		(endTime===void 0)&& (endTime=-1);
+		this._play(onComplete,times,delay,startTime,endTime,false);
 	}
 
-	__proto.playReverse=function(onComplete,times,delay){
+	__proto.playReverse=function(onComplete,times,delay,startTime,endTime){
 		(times===void 0)&& (times=1);
 		(delay===void 0)&& (delay=0);
-		this._play(onComplete,times,delay,true);
+		(startTime===void 0)&& (startTime=0);
+		(endTime===void 0)&& (endTime=-1);
+		this._play(onComplete,1,delay,startTime,endTime,true);
 	}
 
-	__proto.changeRepeat=function(value){
+	__proto.changePlayTimes=function(value){
 		this._totalTimes=value;
 	}
 
-	__proto._play=function(onComplete,times,delay,reversed){
+	__proto.setAutoPlay=function(value,times,delay){
 		(times===void 0)&& (times=1);
 		(delay===void 0)&& (delay=0);
-		(reversed===void 0)&& (reversed=false);
-		this.stop();
-		this._totalTimes=times;
-		this._reversed=reversed;
-		this.internalPlay(delay);
-		this._playing=this._totalTasks > 0;
-		if(this._playing){
-			this._onComplete=onComplete;
-			if((this._options & this.OPTION_IGNORE_DISPLAY_CONTROLLER)!=0){
-				var cnt=this._items.length;
-				for(var i=0;i < cnt;i++){
-					var item=this._items[i];
-					if(item.target !=null && item.target !=this._owner)
-						item.displayLockToken=item.target.addDisplayLock();
-				}
+		if (this._autoPlay !=value){
+			this._autoPlay=value;
+			this._autoPlayTimes=times;
+			this._autoPlayDelay=delay;
+			if (this._autoPlay){
+				if (this._owner.onStage)
+					this.play(null,null,this._autoPlayTimes,this._autoPlayDelay);
+			}
+			else{
+				if (!this._owner.onStage)
+					this.stop(false,true);
 			}
 		}
-		else if(onComplete !=null){
-			onComplete.run();
+	}
+
+	__proto._play=function(onComplete,times,delay,startTime,endTime,reversed){
+		(times===void 0)&& (times=1);
+		(delay===void 0)&& (delay=0);
+		(startTime===void 0)&& (startTime=0);
+		(endTime===void 0)&& (endTime=-1);
+		(reversed===void 0)&& (reversed=false);
+		this.stop(true,true);
+		this._totalTimes=times;
+		this._reversed=reversed;
+		this._startTime=startTime;
+		this._endTime=endTime;
+		this._playing=true;
+		this._paused=false;
+		this._onComplete=onComplete;
+		var cnt=this._items.length;
+		for (var i=0;i < cnt;i++){
+			var item=this._items[i];
+			if(item.target==null){
+				if (item.targetId)
+					item.target=this._owner.getChildById(item.targetId);
+				else
+				item.target=this._owner;
+			}
+			else if (item.target !=this._owner && item.target.parent !=this._owner)
+			item.target=null;
+			if (item.target !=null && item.type==10){
+				var trans=(item.target).getTransition(item.value.transName);
+				if(trans==this)
+					trans=null;
+				if (trans !=null){
+					if (item.value.playTimes==0){
+						var j=0;
+						for (j=i-1;j >=0;j--){
+							var item2=this._items[j];
+							if (item2.type==10){
+								if (item2.value.trans==trans){
+									item2.value.stopTime=item.time-item2.time;
+									break ;
+								}
+							}
+						}
+						if(j<0)
+							item.value.stopTime=0;
+						else
+						trans=null;
+					}
+					else
+					item.value.stopTime=-1;
+				}
+				item.value.trans=trans;
+			}
 		}
+		if(delay==0)
+			this.onDelayedPlay();
+		else
+		GTween.delayedCall(delay).onComplete(this.onDelayedPlay,this);
 	}
 
 	__proto.stop=function(setToComplete,processCallback){
 		(setToComplete===void 0)&& (setToComplete=true);
 		(processCallback===void 0)&& (processCallback=false);
-		if(this._playing){
-			this._playing=false;
-			this._totalTasks=0;
-			this._totalTimes=0;
-			var handler=this._onComplete;
-			this._onComplete=null;
-			var cnt=this._items.length;
-			var i=NaN;
-			var item;
-			if(this._reversed){
-				for(i=cnt-1;i>=0;i--){
-					item=this._items[i];
-					if(item.target==null)
-						continue ;
-					this.stopItem(item,setToComplete);
-				}
+		if (!this._playing)
+			return;
+		this._playing=false;
+		this._totalTasks=0;
+		this._totalTimes=0;
+		var handler=this._onComplete;
+		this._onComplete=null;
+		GTween.kill(this);
+		var cnt=this._items.length;
+		if(this._reversed){
+			for (var i=cnt-1;i >=0;i--){
+				var item=this._items[i];
+				if(item.target==null)
+					continue ;
+				this.stopItem(item,setToComplete);
 			}
-			else {
-				for(i=0;i < cnt;i++){
-					item=this._items[i];
-					if(item.target==null)
-						continue ;
-					this.stopItem(item,setToComplete);
-				}
+		}
+		else{
+			for (i=0;i < cnt;i++){
+				item=this._items[i];
+				if(item.target==null)
+					continue ;
+				this.stopItem(item,setToComplete);
 			}
-			if(processCallback && handler !=null){
-				handler.run();
-			}
+		}
+		if (processCallback && handler !=null){
+			handler.run();
 		}
 	}
 
@@ -4812,83 +5078,89 @@ var Transition=(function(){
 			item.target.releaseDisplayLock(item.displayLockToken);
 			item.displayLockToken=0;
 		}
-		if (item.type==12 && item.filterCreated)
-			item.target.filters=null;
-		if(item.completed)
-			return;
-		if(item.tweener !=null){
-			item.tweener.clear();
+		if (item.tweener !=null){
+			item.tweener.kill(setToComplete);
 			item.tweener=null;
+			if (item.type==11 && !setToComplete){
+				item.target._gearLocked=true;
+				item.target.setXY(item.target.x-item.value.lastOffsetX,item.target.y-item.value.lastOffsetY);
+				item.target._gearLocked=false;
+			}
 		}
-		if(item.type==10){
-			var trans=(item.target).getTransition(item.value.s);
-			if(trans !=null)
+		if (item.type==10){
+			var trans=item.value.trans;
+			if (trans !=null)
 				trans.stop(setToComplete,false);
 		}
-		else if(item.type==11){
-			Laya.timer.clear(item,item.__shake);
-			item.target._gearLocked=true;
-			item.target.setXY(item.target.x-item.startValue.f1,item.target.y-item.startValue.f2);
-			item.target._gearLocked=false;
-		}
-		else {
-			if(setToComplete){
-				if(item.tween){
-					if(!item.yoyo || item.repeat % 2==0)
-						this.applyValue(item,this._reversed?item.startValue:item.endValue);
-					else
-					this.applyValue(item,this._reversed?item.endValue:item.startValue);
-				}
-				else if(item.type !=9)
-				this.applyValue(item,item.value);
+	}
+
+	__proto.setPaused=function(paused){
+		if (!this._playing || this._paused==paused)
+			return;
+		this._paused=paused;
+		var tweener=GTween.getTween(this);
+		if (tweener !=null)
+			tweener.setPaused(paused);
+		var cnt=this._items.length;
+		for (var i=0;i < cnt;i++){
+			var item=this._items[i];
+			if (item.target==null)
+				continue ;
+			if (item.type==10){
+				if (item.value.trans !=null)
+					item.value.trans.setPaused(paused);
 			}
+			else if (item.type==7){
+				if (paused){
+					item.value.flag=(item.target).playing;
+					(item.target).playing=false;
+				}
+				else
+				(item.target).playing=item.value.flag;
+			}
+			if (item.tweener !=null)
+				item.tweener.setPaused(paused);
 		}
 	}
 
 	__proto.dispose=function(){
-		if (!this._playing)
-			return;
-		this._playing=false;
+		if(this._playing)
+			GTween.kill(this);
 		var cnt=this._items.length;
 		for (var i=0;i < cnt;i++){
 			var item=this._items[i];
-			if (item.target==null || item.completed)
-				continue ;
 			if (item.tweener !=null){
-				item.tweener.clear();
+				item.tweener.kill();
 				item.tweener=null;
 			}
-			if (item.type==10){
-				var trans=(item.target).getTransition(item.value.s);
-				if (trans !=null)
-					trans.dispose();
-			}
-			else if (item.type==11){
-				Laya.timer.clear(item,item.__shake);
-			}
+			item.target=null;
+			item.hook=null;
+			if (item.tweenConfig !=null)
+				item.tweenConfig.endHook=null;
 		}
+		this._items.length=0;
+		this._playing=false;
+		this._onComplete=null;
 	}
 
 	__proto.setValue=function(label,__args){
 		var args=[];for(var i=1,sz=arguments.length;i<sz;i++)args.push(arguments[i]);
 		var cnt=this._items.length;
 		var value;
-		for(var i=0;i < cnt;i++){
+		for (var i=0;i < cnt;i++){
 			var item=this._items[i];
-			if(item.label==null && item.label2==null)
-				continue ;
-			if(item.label==label){
-				if(item.tween)
-					value=item.startValue;
+			if (item.label==label){
+				if (item.tweenConfig !=null)
+					value=item.tweenConfig.startValue;
 				else
 				value=item.value;
 			}
-			else if(item.label2==label){
-				value=item.endValue;
+			else if (item.tweenConfig !=null && item.tweenConfig.endLabel==label){
+				value=item.tweenConfig.endValue;
 			}
 			else
 			continue ;
-			switch(item.type){
+			switch (item.type){
 				case 0:
 				case 1:
 				case 3:
@@ -4903,33 +5175,33 @@ var Transition=(function(){
 					value.f1=parseFloat(args[0]);
 					break ;
 				case 5:
-					value.i=parseInt(args[0]);
+					value.f1=parseFloat(args[0]);
 					break ;
 				case 6:
-					value.s=args[0];
+					value.f1=parseFloat(args[0]);
 					break ;
 				case 7:
-					value.i=parseInt(args[0]);
-					if(args.length > 1)
-						value.b=args[1];
+					value.frame=parseInt(args[0]);
+					if (args.length > 1)
+						value.playing=args[1];
 					break ;
 				case 8:
-					value.b=args[0];
+					value.visible=args[0];
 					break ;
 				case 9:
-					value.s=args[0];
+					value.sound=args[0];
 					if(args.length > 1)
-						value.f1=parseFloat(args[1]);
+						value.volume=parseFloat(args[1]);
 					break ;
 				case 10:
-					value.s=args[0];
-					if(args.length > 1)
-						value.i=parseInt(args[1]);
+					value.transName=args[0];
+					if (args.length > 1)
+						value.playTimes=parseInt(args[1]);
 					break ;
 				case 11:
-					value.f1=parseFloat(args[0]);
-					if(args.length > 1)
-						value.f2=parseFloat(args[1]);
+					value.amplitude=parseFloat(args[0]);
+					if (args.length > 1)
+						value.duration=parseFloat(args[1]);
 					break ;
 				case 12:
 					value.f1=parseFloat(args[0]);
@@ -4937,20 +5209,24 @@ var Transition=(function(){
 					value.f3=parseFloat(args[2]);
 					value.f4=parseFloat(args[3]);
 					break ;
+				case 14:
+				case 15:
+					value.text=args[0];
+					break ;
 				}
 		}
 	}
 
 	__proto.setHook=function(label,callback){
 		var cnt=this._items.length;
-		for(var i=0;i < cnt;i++){
+		for (var i=0;i < cnt;i++){
 			var item=this._items[i];
-			if(item.label==label){
+			if (item.label==label){
 				item.hook=callback;
 				break ;
 			}
-			else if(item.label2==label){
-				item.hook2=callback;
+			else if (item.tweenConfig !=null && item.tweenConfig.endLabel==label){
+				item.tweenConfig.endHook=callback;
 				break ;
 			}
 		}
@@ -4958,10 +5234,11 @@ var Transition=(function(){
 
 	__proto.clearHooks=function(){
 		var cnt=this._items.length;
-		for(var i=0;i < cnt;i++){
+		for (var i=0;i < cnt;i++){
 			var item=this._items[i];
 			item.hook=null;
-			item.hook2=null;
+			if (item.tweenConfig !=null)
+				item.tweenConfig.endHook=null;
 		}
 	}
 
@@ -4969,8 +5246,10 @@ var Transition=(function(){
 		var cnt=this._items.length;
 		for (var i=0;i < cnt;i++){
 			var item=this._items[i];
-			if (item.label==label)
+			if (item.label==label){
 				item.targetId=newTarget.id;
+				item.target=null;
+			}
 		}
 	}
 
@@ -4978,25 +5257,37 @@ var Transition=(function(){
 		var cnt=this._items.length;
 		for (var i=0;i < cnt;i++){
 			var item=this._items[i];
-			if (item.tween && item.label==label)
-				item.duration=value;
+			if (item.tweenConfig !=null && item.label==label)
+				item.tweenConfig.duration=value;
 		}
+	}
+
+	__proto.getLabelTime=function(label){
+		var cnt=this._items.length;
+		for (var i=0;i < cnt;i++){
+			var item=this._items[i];
+			if (item.label==label)
+				return item.time;
+			else if (item.tweenConfig !=null && item.tweenConfig.endLabel==label)
+			return item.time+item.tweenConfig.duration;
+		}
+		return Number.NaN;
 	}
 
 	__proto.updateFromRelations=function(targetId,dx,dy){
 		var cnt=this._items.length;
-		if(cnt==0)
+		if (cnt==0)
 			return;
-		for(var i=0;i < cnt;i++){
+		for (var i=0;i < cnt;i++){
 			var item=this._items[i];
-			if(item.type==0 && item.targetId==targetId){
-				if(item.tween){
-					item.startValue.f1+=dx;
-					item.startValue.f2+=dy;
-					item.endValue.f1+=dx;
-					item.endValue.f2+=dy;
+			if (item.type==0 && item.targetId==targetId){
+				if (item.tweenConfig!=null){
+					item.tweenConfig.startValue.f1+=dx;
+					item.tweenConfig.startValue.f2+=dy;
+					item.tweenConfig.endValue.f1+=dx;
+					item.tweenConfig.endValue.f2+=dy;
 				}
-				else {
+				else{
 					item.value.f1+=dx;
 					item.value.f2+=dy;
 				}
@@ -5004,242 +5295,343 @@ var Transition=(function(){
 		}
 	}
 
-	__proto.OnOwnerRemovedFromStage=function(){
+	__proto.onOwnerAddedToStage=function(){
+		if (this._autoPlay && !this._playing)
+			this.play(null,this._autoPlayTimes,this._autoPlayDelay);
+	}
+
+	__proto.onOwnerRemovedFromStage=function(){
 		if ((this._options & this.OPTION_AUTO_STOP_DISABLED)==0)
 			this.stop((this._options & this.OPTION_AUTO_STOP_AT_END)!=0 ? true :false,false);
 	}
 
-	__proto.internalPlay=function(delay){
-		(delay===void 0)&& (delay=0);
+	__proto.onDelayedPlay=function(){
+		this.internalPlay();
+		this._playing=this._totalTasks>0;
+		if (this._playing){
+			if ((this._options & this.OPTION_IGNORE_DISPLAY_CONTROLLER)!=0){
+				var cnt=this._items.length;
+				for (var i=0;i < cnt;i++){
+					var item=this._items[i];
+					if (item.target !=null && item.target!=this._owner)
+						item.displayLockToken=item.target.addDisplayLock();
+				}
+			}
+		}
+		else if (this._onComplete !=null){
+			var handler=this._onComplete;
+			this._onComplete=null;
+			handler.run();
+		}
+	}
+
+	__proto.internalPlay=function(){
 		this._ownerBaseX=this._owner.x;
 		this._ownerBaseY=this._owner.y;
 		this._totalTasks=0;
 		var cnt=this._items.length;
-		var startTime=NaN;
 		var item;
-		for(var i=0;i < cnt;i++){
-			item=this._items[i];
-			if(item.targetId)
-				item.target=this._owner.getChildById(item.targetId);
-			else
-			item.target=this._owner;
-			if(item.target==null)
-				continue ;
-			if(item.tween){
-				if(this._reversed)
-					startTime=delay+this._maxTime-item.time-item.duration;
-				else
-				startTime=delay+item.time;
-				if(startTime>0){
-					this._totalTasks++;
-					item.completed=false;
-					item.tweener=Tween.to(item.value,{},startTime*1000,null,Handler.create(this,this.__delayCall,[item]));
-					item.tweener.update=null;
+		var needSkipAnimations=false;
+		if (!this._reversed){
+			for (var i=0;i < cnt;i++){
+				item=this._items[i];
+				if (item.target==null)
+					continue ;
+				if (item.type==7 && this._startTime !=0 && item.time <=this._startTime){
+					needSkipAnimations=true;
+					item.value.flag=false;
 				}
 				else
-				this.startTween(item);
+				this.playItem(item);
 			}
-			else {
-				if(this._reversed)
-					startTime=delay+this._maxTime-item.time;
-				else
-				startTime=delay+item.time;
-				if(startTime==0)
-					this.applyValue(item,item.value);
-				else {
-					item.completed=false;
-					this._totalTasks++;
-					item.tweener=Tween.to(item.value,{},startTime*1000,null,Handler.create(this,this.__delayCall2,[item]));
-					item.tweener.update=null;
-				}
-			}
-		}
-	}
-
-	__proto.prepareValue=function(item,toProps,reversed){
-		(reversed===void 0)&& (reversed=false);
-		var startValue;
-		var endValue;
-		if(reversed){
-			startValue=item.endValue;
-			endValue=item.startValue;
 		}
 		else{
-			startValue=item.startValue;
-			endValue=item.endValue;
+			for (i=cnt-1;i >=0;i--){
+				item=this._items[i];
+				if (item.target==null)
+					continue ;
+				this.playItem(item);
+			}
 		}
-		switch(item.type){
-			case 0:
-			case 1:
-				if(item.type==0){
-					if (item.target==this._owner){
-						if(!startValue.b1)
-							startValue.f1=0;
-						if(!startValue.b2)
-							startValue.f2=0;
-					}
-					else{
-						if(!startValue.b1)
-							startValue.f1=item.target.x;
-						if(!startValue.b2)
-							startValue.f2=item.target.y;
-					}
+		if (needSkipAnimations)
+			this.skipAnimations();
+	}
+
+	__proto.playItem=function(item){
+		var time=NaN;
+		if (item.tweenConfig !=null){
+			if (this._reversed)
+				time=(this._totalDuration-item.time-item.tweenConfig.duration);
+			else
+			time=item.time;
+			if (this._endTime==-1 || time <=this._endTime){
+				var startValue;
+				var endValue;
+				if(this._reversed){
+					startValue=item.tweenConfig.endValue;
+					endValue=item.tweenConfig.startValue;
 				}
 				else{
-					if(!startValue.b1)
-						startValue.f1=item.target.width;
-					if(!startValue.b2)
-						startValue.f2=item.target.height;
+					startValue=item.tweenConfig.startValue;
+					endValue=item.tweenConfig.endValue;
 				}
-				item.value.f1=startValue.f1;
-				item.value.f2=startValue.f2;
-				if(!endValue.b1)
-					endValue.f1=item.value.f1;
-				if(!endValue.b2)
-					endValue.f2=item.value.f2;
 				item.value.b1=startValue.b1 || endValue.b1;
 				item.value.b2=startValue.b2 || endValue.b2;
-				toProps.f1=endValue.f1;
-				toProps.f2=endValue.f2;
-				break ;
+				switch(item.type){
+					case 0:
+					case 1:
+					case 2:
+					case 13:
+						item.tweener=GTween.to2(startValue.f1,startValue.f2,endValue.f1,endValue.f2,item.tweenConfig.duration);
+						break ;
+					case 4:
+					case 5:
+						item.tweener=GTween.to(startValue.f1,endValue.f1,item.tweenConfig.duration);
+						break ;
+					case 6:
+						item.tweener=GTween.toColor(startValue.f1,endValue.f1,item.tweenConfig.duration);
+						break ;
+					case 12:
+						item.tweener=GTween.to4(startValue.f1,startValue.f2,startValue.f3,startValue.f4,
+						endValue.f1,endValue.f2,endValue.f3,endValue.f4,item.tweenConfig.duration);
+						break ;
+					}
+				item.tweener.setDelay(time)
+				.setEase(item.tweenConfig.easeType)
+				.setRepeat(item.tweenConfig.repeat,item.tweenConfig.yoyo)
+				.setTimeScale(this._timeScale)
+				.setTarget(item)
+				.onStart(this.onTweenStart,this)
+				.onUpdate(this.onTweenUpdate,this)
+				.onComplete(this.onTweenComplete,this);
+				if (this._endTime >=0)
+					item.tweener.setBreakpoint(this._endTime-time);
+				this._totalTasks++;
+			}
+		}
+		else if(item.type==11){
+			if (this._reversed)
+				time=(this._totalDuration-item.time-item.value.duration);
+			else
+			time=item.time;
+			item.value.offsetX=item.value.offsetY=0;
+			item.value.lastOffsetX=item.value.lastOffsetY=0;
+			item.tweener=GTween.shake(0,0,item.value.amplitude,item.value.duration)
+			.setDelay(time)
+			.setTimeScale(this._timeScale)
+			.setTarget(item)
+			.onUpdate(this.onTweenUpdate,this)
+			.onComplete(this.onTweenComplete,this);
+			if (this._endTime >=0)
+				item.tweener.setBreakpoint(this._endTime-item.time);
+			this._totalTasks++;
+		}
+		else{
+			if (this._reversed)
+				time=(this._totalDuration-item.time);
+			else
+			time=item.time;
+			if (time <=this._startTime){
+				this.applyValue(item);
+				this.callHook(item,false);
+			}
+			else if (this._endTime==-1 || time <=this._endTime){
+				this._totalTasks++;
+				item.tweener=GTween.delayedCall(time)
+				.setTimeScale(this._timeScale)
+				.setTarget(item)
+				.onComplete(this.onDelayedPlayItem,this);
+			}
+		}
+		if (item.tweener !=null)
+			item.tweener.seek(this._startTime);
+	}
+
+	__proto.skipAnimations=function(){
+		var frame=0;
+		var playStartTime=NaN;
+		var playTotalTime=NaN;
+		var value;
+		var target;
+		var item;
+		var cnt=this._items.length;
+		for (var i=0;i < cnt;i++){
+			item=this._items[i];
+			if (item.type !=7 || item.time > this._startTime)
+				continue ;
+			value=item.value;
+			if (value.flag)
+				continue ;
+			target=(item.target);
+			frame=target.frame;
+			playStartTime=target.playing ? 0 :-1;
+			playTotalTime=0;
+			for (var j=i;j < cnt;j++){
+				item=this._items[j];
+				if (item.type !=7 || item.target !=target || item.time > this._startTime)
+					continue ;
+				value=item.value;
+				value.flag=true;
+				if (value.frame !=-1){
+					frame=value.frame;
+					if (value.playing)
+						playStartTime=item.time;
+					else
+					playStartTime=-1;
+					playTotalTime=0;
+				}
+				else{
+					if (value.playing){
+						if (playStartTime < 0)
+							playStartTime=item.time;
+					}
+					else{
+						if (playStartTime >=0)
+							playTotalTime+=(item.time-playStartTime);
+						playStartTime=-1;
+					}
+				}
+				this.callHook(item,false);
+			}
+			if (playStartTime >=0)
+				playTotalTime+=(this._startTime-playStartTime);
+			target.playing=playStartTime>=0;
+			target.frame=frame;
+			if (playTotalTime > 0)
+				target.advance(playTotalTime*1000);
+		}
+	}
+
+	__proto.onDelayedPlayItem=function(tweener){
+		var item=tweener.target;
+		item.tweener=null;
+		this._totalTasks--;
+		this.applyValue(item);
+		this.callHook(item,false);
+		this.checkAllComplete();
+	}
+
+	__proto.onTweenStart=function(tweener){
+		var item=tweener.target;
+		if (item.type==0 || item.type==1){
+			var startValue;
+			var endValue;
+			if (this._reversed){
+				startValue=item.tweenConfig.endValue;
+				endValue=item.tweenConfig.startValue;
+			}
+			else{
+				startValue=item.tweenConfig.startValue;
+				endValue=item.tweenConfig.endValue;
+			}
+			if (item.type==0){
+				if (item.target !=this._owner){
+					if (!startValue.b1)
+						startValue.f1=item.target.x;
+					if (!startValue.b2)
+						startValue.f2=item.target.y;
+				}
+				else{
+					if (!startValue.b1)
+						startValue.f1=item.target.x-this._ownerBaseX;
+					if (!startValue.b2)
+						startValue.f2=item.target.y-this._ownerBaseY;
+				}
+			}
+			else{
+				if (!startValue.b1)
+					startValue.f1=item.target.width;
+				if (!startValue.b2)
+					startValue.f2=item.target.height;
+			}
+			if (!endValue.b1)
+				endValue.f1=startValue.f1;
+			if (!endValue.b2)
+				endValue.f2=startValue.f2;
+			tweener.startValue.x=startValue.f1;
+			tweener.startValue.y=startValue.f2;
+			tweener.endValue.x=endValue.f1;
+			tweener.endValue.y=endValue.f2;
+		}
+		this.callHook(item,false);
+	}
+
+	__proto.onTweenUpdate=function(tweener){
+		var item=tweener.target;
+		switch (item.type){
+			case 0:
+			case 1:
 			case 2:
 			case 13:
-				item.value.f1=startValue.f1;
-				item.value.f2=startValue.f2;
-				toProps.f1=endValue.f1;
-				toProps.f2=endValue.f2;
+				item.value.f1=tweener.value.x;
+				item.value.f2=tweener.value.y;
 				break ;
 			case 4:
-				item.value.f1=startValue.f1;
-				toProps.f1=endValue.f1;
-				break ;
 			case 5:
-				item.value.i=startValue.i;
-				toProps.i=endValue.i;
+				item.value.f1=tweener.value.x;
+				break ;
+			case 6:
+				item.value.f1=tweener.value.color;
 				break ;
 			case 12:
-				item.value.f1=startValue.f1;
-				item.value.f2=startValue.f2;
-				item.value.f3=startValue.f3;
-				item.value.f4=startValue.f4;
-				toProps.f1=endValue.f1;
-				toProps.f2=endValue.f2;
-				toProps.f3=endValue.f3;
-				toProps.f4=endValue.f4;
+				item.value.f1=tweener.value.x;
+				item.value.f2=tweener.value.y;
+				item.value.f3=tweener.value.z;
+				item.value.f4=tweener.value.w;
+				break ;
+			case 11:
+				item.value.offsetX=tweener.deltaValue.x;
+				item.value.offsetY=tweener.deltaValue.y;
 				break ;
 			}
-		toProps.dummy=0;
+		this.applyValue(item);
 	}
 
-	__proto.startTween=function(item){
-		var toProps={};
-		this.prepareValue(item,toProps,this._reversed);
-		this.applyValue(item,item.value);
-		var completeHandler;
-		if(item.repeat!=0){
-			item.tweenTimes=0;
-			completeHandler=Handler.create(this,this.__tweenRepeatComplete,[item]);
+	__proto.onTweenComplete=function(tweener){
+		var item=tweener.target;
+		item.tweener=null;
+		this._totalTasks--;
+		if (tweener.allCompleted)
+			this.callHook(item,true);
+		this.checkAllComplete();
+	}
+
+	__proto.onPlayTransCompleted=function(item){
+		this._totalTasks--;
+		this.checkAllComplete();
+	}
+
+	__proto.callHook=function(item,tweenEnd){
+		if (tweenEnd){
+			if (item.tweenConfig!=null && item.tweenConfig.endHook !=null)
+				item.tweenConfig.endHook.run();
 		}
-		else
-		completeHandler=Handler.create(this,this.__tweenComplete,[item]);
-		this._totalTasks++;
-		item.completed=false;
-		item.tweener=Tween.to(item.value,
-		toProps,
-		item.duration*1000,
-		item.easeType,
-		completeHandler);
-		item.tweener.update=Handler.create(this,this.__tweenUpdate,[item],false);
-		if(item.hook !=null)
-			item.hook.run();
-	}
-
-	__proto.__delayCall=function(item){
-		item.tweener=null;
-		this._totalTasks--;
-		this.startTween(item);
-	}
-
-	__proto.__delayCall2=function(item){
-		item.tweener=null;
-		this._totalTasks--;
-		item.completed=true;
-		this.applyValue(item,item.value);
-		if(item.hook !=null)
-			item.hook.run();
-		this.checkAllComplete();
-	}
-
-	__proto.__tweenUpdate=function(item){
-		this.applyValue(item,item.value);
-	}
-
-	__proto.__tweenComplete=function(item){
-		item.tweener=null;
-		this._totalTasks--;
-		item.completed=true;
-		if(item.hook2 !=null)
-			item.hook2.run();
-		this.checkAllComplete();
-	}
-
-	__proto.__tweenRepeatComplete=function(item){
-		item.tweenTimes++;
-		if(item.repeat==-1 || item.tweenTimes < item.repeat+1){
-			var toProps={};
-			var reversed=false;
-			if(item.yoyo){
-				if(this._reversed)
-					reversed=item.tweenTimes % 2==0;
-				else
-				reversed=item.tweenTimes % 2==1;
-			}
-			else
-			reversed=this._reversed;
-			this.prepareValue(item,toProps,reversed);
-			item.tweener=Tween.to(item.value,
-			toProps,
-			item.duration *1000,
-			item.easeType,
-			Handler.create(this,this.__tweenRepeatComplete,[item]));
-			item.tweener.update=Handler.create(this,this.__tweenUpdate,[item],false);
+		else{
+			if (item.time >=this._startTime && item.hook !=null)
+				item.hook.run();
 		}
-		else
-		this.__tweenComplete(item);
-	}
-
-	__proto.__playTransComplete=function(item){
-		this._totalTasks--;
-		item.completed=true;
-		this.checkAllComplete();
 	}
 
 	__proto.checkAllComplete=function(){
-		if(this._playing && this._totalTasks==0){
-			if(this._totalTimes < 0){
-				Laya.timer.callLater(this,this.internalPlay);
+		if (this._playing && this._totalTasks==0){
+			if (this._totalTimes < 0){
+				this.internalPlay();
 			}
-			else {
+			else{
 				this._totalTimes--;
-				if(this._totalTimes > 0)
-					Laya.timer.callLater(this,this.internalPlay);
-				else {
+				if (this._totalTimes > 0)
+					this.internalPlay();
+				else{
 					this._playing=false;
 					var cnt=this._items.length;
 					for (var i=0;i < cnt;i++){
 						var item=this._items[i];
-						if (item.target !=null){
-							if (item.displayLockToken!=0){
-								item.target.releaseDisplayLock(item.displayLockToken);
-								item.displayLockToken=0;
-							}
-							if (item.filterCreated){
-								item.filterCreated=false;
-								item.target.filters=null;
-							}
+						if (item.target !=null && item.displayLockToken!=0){
+							item.target.releaseDisplayLock(item.displayLockToken);
+							item.displayLockToken=0;
 						}
 					}
-					if(this._onComplete !=null){
+					if (this._onComplete !=null){
 						var handler=this._onComplete;
 						this._onComplete=null;
 						handler.run();
@@ -5249,349 +5641,242 @@ var Transition=(function(){
 		}
 	}
 
-	__proto.applyValue=function(item,value){
+	__proto.applyValue=function(item){
 		item.target._gearLocked=true;
-		switch(item.type){
+		switch (item.type){
 			case 0:
 				if(item.target==this._owner){
-					var f1=0,f2=0;
-					if(!value.b1)
+					var f1=NaN,f2=NaN;
+					if (!item.value.b1)
 						f1=item.target.x;
 					else
-					f1=value.f1+this._ownerBaseX;
-					if(!value.b2)
+					f1=item.value.f1+this._ownerBaseX;
+					if (!item.value.b2)
 						f2=item.target.y;
 					else
-					f2=value.f2+this._ownerBaseY;
+					f2=item.value.f2+this._ownerBaseY;
 					item.target.setXY(f1,f2);
 				}
-				else {
-					if(!value.b1)
-						value.f1=item.target.x;
-					if(!value.b2)
-						value.f2=item.target.y;
-					item.target.setXY(value.f1,value.f2);
+				else{
+					if (!item.value.b1)
+						item.value.f1=item.target.x;
+					if (!item.value.b2)
+						item.value.f2=item.target.y;
+					item.target.setXY(item.value.f1,item.value.f2);
 				}
 				break ;
 			case 1:
-				if(!value.b1)
-					value.f1=item.target.width;
-				if(!value.b2)
-					value.f2=item.target.height;
-				item.target.setSize(value.f1,value.f2);
+				if (!item.value.b1)
+					item.value.f1=item.target.width;
+				if (!item.value.b2)
+					item.value.f2=item.target.height;
+				item.target.setSize(item.value.f1,item.value.f2);
 				break ;
 			case 3:
-				item.target.setPivot(value.f1,value.f2);
+				item.target.setPivot(item.value.f1,item.value.f2,item.target.pivotAsAnchor);
 				break ;
 			case 4:
-				item.target.alpha=value.f1;
+				item.target.alpha=item.value.f1;
 				break ;
 			case 5:
-				item.target.rotation=value.i;
+				item.target.rotation=item.value.f1;
 				break ;
 			case 2:
-				item.target.setScale(value.f1,value.f2);
+				item.target.setScale(item.value.f1,item.value.f2);
 				break ;
 			case 13:
-				item.target.setSkew(value.f1,value.f2);
+				item.target.setSkew(item.value.f1,item.value.f2);
 				break ;
 			case 6:
-				(item.target).color=value.s;
+				(item.target).color=ToolSet.convertToHtmlColor(item.value.f1,false);
 				break ;
 			case 7:
-				if(!value.b1)
-					value.i=(item.target).frame;
-				(item.target).frame=value.i;
-				(item.target).playing=value.b;
+				if (item.value.frame>=0)
+					(item.target).frame=item.value.frame;
+				(item.target).playing=item.value.playing;
+				(item.target).timeScale=this._timeScale;
 				break ;
 			case 8:
-				item.target.visible=value.b;
+				item.target.visible=item.value.visible;
 				break ;
-			case 10:;
-				var trans=(item.target).getTransition(value.s);
-				if(trans !=null){
-					if(value.i==0)
-						trans.stop(false,true);
-					else if(trans.playing)
-					trans._totalTimes=value.i;
-					else {
-						item.completed=false;
+			case 10:
+				if (this._playing){
+					var trans=item.value.trans;
+					if (trans !=null){
 						this._totalTasks++;
-						if(this._reversed)
-							trans.playReverse(Handler.create(this,this.__playTransComplete,[item]),item.value.i);
-						else
-						trans.play(Handler.create(this,this.__playTransComplete,[item]),item.value.i);
+						var startTime=this._startTime > item.time ? (this._startTime-item.time):0;
+						var endTime=this._endTime >=0 ? (this._endTime-item.time):-1;
+						if (item.value.stopTime >=0 && (endTime < 0 || endTime > item.value.stopTime))
+							endTime=item.value.stopTime;
+						trans.timeScale=this._timeScale;
+						trans._play(Handler.create(this,this.onPlayTransCompleted,[item]),item.value.playTimes,0,startTime,endTime,this._reversed);
 					}
 				}
 				break ;
-			case 9:;
-				var pi=UIPackage.getItemByURL(value.s);
-				if(pi)
-					GRoot.inst.playOneShotSound(pi.owner.getItemAssetURL(pi));
-				else
-				GRoot.inst.playOneShotSound(value.s);
+			case 9:
+				if (this._playing && item.time >=this._startTime){
+					if(item.value.audioClip==null){
+						var pi=UIPackage.getItemByURL(item.value.sound);
+						if(pi)
+							item.value.audioClip=pi.file;
+						else
+						item.value.audioClip=item.value.sound;
+					}
+					if(item.value.audioClip)
+						GRoot.inst.playOneShotSound(item.value.audioClip,item.value.volume);
+				}
 				break ;
 			case 11:
-				item.startValue.f1=0;
-				item.startValue.f2=0;
-				item.startValue.f3=item.value.f2;
-				item.startValue.i=Laya.timer.currTimer;
-				Laya.timer.frameLoop(1,item,item.__shake,[this]);
-				this._totalTasks++;
-				item.completed=false;
+				item.target.setXY(item.target.x-item.value.lastOffsetX+item.value.offsetX,item.target.y-item.value.lastOffsetY+item.value.offsetY);
+				item.value.lastOffsetX=item.value.offsetX;
+				item.value.lastOffsetY=item.value.offsetY;
 				break ;
-			case 12:;
-				var arr=item.target.filters;
-				if(!arr || !(((arr[0])instanceof laya.filters.ColorFilter )))
-					item.filterCreated=true;
-				var cm=new ColorMatrix();
-				cm.adjustBrightness(value.f1);
-				cm.adjustContrast(value.f2);
-				cm.adjustSaturation(value.f3);
-				cm.adjustHue(value.f4);
-				arr=[new ColorFilter(cm)];
-				item.target.filters=arr;
+			case 12:{
+					var arr=item.target.filters;
+					var cm=new ColorMatrix();
+					cm.adjustBrightness(item.value.f1);
+					cm.adjustContrast(item.value.f2);
+					cm.adjustSaturation(item.value.f3);
+					cm.adjustHue(item.value.f4);
+					arr=[new ColorFilter(cm)];
+					item.target.filters=arr;
+					break ;
+				}
+			case 14:
+				item.target.text=item.value.text;
+				break ;
+			case 15:
+				item.target.icon=item.value.text;
 				break ;
 			}
 		item.target._gearLocked=false;
 	}
 
-	__proto.__shakeItem=function(item){
-		var r=Math.ceil(item.value.f1 *item.startValue.f3 / item.value.f2);
-		var rx=(Math.random()*2-1)*r;
-		var ry=(Math.random()*2-1)*r;
-		rx=rx > 0 ? Math.ceil(rx):Math.floor(rx);
-		ry=ry > 0 ? Math.ceil(ry):Math.floor(ry);
-		item.target._gearLocked=true;
-		item.target.setXY(item.target.x-item.startValue.f1+rx,item.target.y-item.startValue.f2+ry);
-		item.target._gearLocked=false;
-		item.startValue.f1=rx;
-		item.startValue.f2=ry;
-		var t=Laya.timer.currTimer;
-		item.startValue.f3-=(t-item.startValue.i)/ 1000;
-		item.startValue.i=t;
-		if(item.startValue.f3 <=0){
-			item.target._gearLocked=true;
-			item.target.setXY(item.target.x-item.startValue.f1,item.target.y-item.startValue.f2);
-			item.target._gearLocked=false;
-			item.completed=true;
-			this._totalTasks--;
-			Laya.timer.clear(item,item.__shake);
-			this.checkAllComplete();
+	__proto.setup=function(buffer){
+		this.name=buffer.readS();
+		this._options=buffer.getInt32();
+		this._autoPlay=buffer.readBool();
+		this._autoPlayTimes=buffer.getInt32();
+		this._autoPlayDelay=buffer.getFloat32();
+		var cnt=buffer.getInt16();
+		for (var i=0;i < cnt;i++){
+			var dataLen=buffer.getInt16();
+			var curPos=buffer.pos;
+			buffer.seek(curPos,0);
+			var item=new TransitionItem(buffer.readByte());
+			this._items[i]=item;
+			item.time=buffer.getFloat32();
+			var targetId=buffer.getInt16();
+			if (targetId < 0)
+				item.targetId="";
+			else
+			item.targetId=this._owner.getChildAt(targetId).id;
+			item.label=buffer.readS();
+			if (buffer.readBool()){
+				buffer.seek(curPos,1);
+				item.tweenConfig=new TweenConfig();
+				item.tweenConfig.duration=buffer.getFloat32();
+				if (item.time+item.tweenConfig.duration > this._totalDuration)
+					this._totalDuration=item.time+item.tweenConfig.duration;
+				item.tweenConfig.easeType=buffer.readByte();
+				item.tweenConfig.repeat=buffer.getInt32();
+				item.tweenConfig.yoyo=buffer.readBool();
+				item.tweenConfig.endLabel=buffer.readS();
+				buffer.seek(curPos,2);
+				this.decodeValue(item,buffer,item.tweenConfig.startValue);
+				buffer.seek(curPos,3);
+				this.decodeValue(item,buffer,item.tweenConfig.endValue);
+			}
+			else{
+				if (item.time > this._totalDuration)
+					this._totalDuration=item.time;
+				buffer.seek(curPos,2);
+				this.decodeValue(item,buffer,item.value);
+			}
+			buffer.pos=curPos+dataLen;
 		}
 	}
 
-	__proto.setup=function(xml){
-		this.name=xml.getAttribute("name");
-		var str=xml.getAttribute("options");
-		if(str)
-			this._options=parseInt(str);
-		str=xml.getAttribute("autoPlay");
-		if(str)
-			this._autoPlay=str=="true";
-		if(this._autoPlay){
-			str=xml.getAttribute("autoPlayRepeat");
-			if(str)
-				this.autoPlayRepeat=parseInt(str);
-			str=xml.getAttribute("autoPlayDelay");
-			if(str)
-				this.autoPlayDelay=parseFloat(str);
-		};
-		var col=xml.childNodes;
-		var length1=col.length;
-		for(var i1=0;i1 < length1;i1++){
-			var cxml=col[i1];
-			if(cxml.nodeName!="item")
-				continue ;
-			var item=new TransitionItem();
-			this._items.push(item);
-			item.time=parseInt(cxml.getAttribute("time"))/ this.FRAME_RATE;
-			item.targetId=cxml.getAttribute("target");
-			str=cxml.getAttribute("type");
-			switch(str){
-				case "XY":
-					item.type=0;
-					break ;
-				case "Size":
-					item.type=1;
-					break ;
-				case "Scale":
-					item.type=2;
-					break ;
-				case "Pivot":
-					item.type=3;
-					break ;
-				case "Alpha":
-					item.type=4;
-					break ;
-				case "Rotation":
-					item.type=5;
-					break ;
-				case "Color":
-					item.type=6;
-					break ;
-				case "Animation":
-					item.type=7;
-					break ;
-				case "Visible":
-					item.type=8;
-					break ;
-				case "Sound":
-					item.type=9;
-					break ;
-				case "Transition":
-					item.type=10;
-					break ;
-				case "Shake":
-					item.type=11;
-					break ;
-				case "ColorFilter":
-					item.type=12;
-					break ;
-				case "Skew":
-					item.type=13;
-					break ;
-				default :
-					item.type=14;
-					break ;
-				}
-			item.tween=cxml.getAttribute("tween")=="true";
-			item.label=cxml.getAttribute("label");
-			if(item.tween){
-				item.duration=parseInt(cxml.getAttribute("duration"))/ this.FRAME_RATE;
-				if(item.time+item.duration > this._maxTime)
-					this._maxTime=item.time+item.duration;
-				str=cxml.getAttribute("ease");
-				if(str)
-					item.easeType=ToolSet.parseEaseType(str);
-				str=cxml.getAttribute("repeat");
-				if(str)
-					item.repeat=parseInt(str);
-				item.yoyo=cxml.getAttribute("yoyo")=="true";
-				item.label2=cxml.getAttribute("label2");
-				var v=cxml.getAttribute("endValue");
-				if(v){
-					this.decodeValue(item.type,cxml.getAttribute("startValue"),item.startValue);
-					this.decodeValue(item.type,v,item.endValue);
-				}
-				else {
-					item.tween=false;
-					this.decodeValue(item.type,cxml.getAttribute("startValue"),item.value);
-				}
-			}
-			else {
-				if(item.time > this._maxTime)
-					this._maxTime=item.time;
-				this.decodeValue(item.type,cxml.getAttribute("value"),item.value);
-			}
-		}
-	}
-
-	__proto.decodeValue=function(type,str,value){
-		var arr;
-		switch(type){
+	__proto.decodeValue=function(item,buffer,value){
+		switch(item.type){
 			case 0:
 			case 1:
 			case 3:
 			case 13:
-				arr=str.split(",");
-				if(arr[0]=="-"){
-					value.b1=false;
-				}
-				else {
-					value.f1=parseFloat(arr[0]);
-					value.b1=true;
-				}
-				if(arr[1]=="-"){
-					value.b2=false;
-				}
-				else {
-					value.f2=parseFloat(arr[1]);
-					value.b2=true;
-				}
+				value.b1=buffer.readBool();
+				value.b2=buffer.readBool();
+				value.f1=buffer.getFloat32();
+				value.f2=buffer.getFloat32();
 				break ;
 			case 4:
-				value.f1=parseFloat(str);
-				break ;
 			case 5:
-				value.i=parseInt(str);
+				value.f1=buffer.getFloat32();
 				break ;
 			case 2:
-				arr=str.split(",");
-				value.f1=parseFloat(arr[0]);
-				value.f2=parseFloat(arr[1]);
+				value.f1=buffer.getFloat32();
+				value.f2=buffer.getFloat32();
 				break ;
 			case 6:
-				value.s=str;
+				value.f1=buffer.readColor();
 				break ;
 			case 7:
-				arr=str.split(",");
-				if(arr[0]=="-"){
-					value.b1=false;
-				}
-				else {
-					value.i=parseInt(arr[0]);
-					value.b1=true;
-				}
-				value.b=arr[1]=="p";
+				value.playing=buffer.readBool();
+				value.frame=buffer.getInt32();
 				break ;
 			case 8:
-				value.b=str=="true";
+				value.visible=buffer.readBool();
 				break ;
 			case 9:
-				arr=str.split(",");
-				value.s=arr[0];
-				if(arr.length > 1){
-					var intv=parseInt(arr[1]);
-					if(intv==0 || intv==100)
-						value.f1=1;
-					else
-					value.f1=intv / 100;
-				}
-				else
-				value.f1=1;
+				value.sound=buffer.readS();
+				value.volume=buffer.getFloat32();
 				break ;
 			case 10:
-				arr=str.split(",");
-				value.s=arr[0];
-				if(arr.length > 1)
-					value.i=parseInt(arr[1]);
-				else
-				value.i=1;
+				value.transName=buffer.readS();
+				value.playTimes=buffer.getInt32();
 				break ;
 			case 11:
-				arr=str.split(",");
-				value.f1=parseFloat(arr[0]);
-				value.f2=parseFloat(arr[1]);
+				value.amplitude=buffer.getFloat32();
+				value.duration=buffer.getFloat32();
 				break ;
 			case 12:
-				arr=str.split(",");
-				value.f1=parseFloat(arr[0]);
-				value.f2=parseFloat(arr[1]);
-				value.f3=parseFloat(arr[2]);
-				value.f4=parseFloat(arr[3]);
+				value.f1=buffer.getFloat32();
+				value.f2=buffer.getFloat32();
+				value.f3=buffer.getFloat32();
+				value.f4=buffer.getFloat32();
+				break ;
+			case 14:
+			case 15:
+				value.text=buffer.readS();
 				break ;
 			}
 	}
 
-	__getset(0,__proto,'autoPlay',function(){
-		return this._autoPlay;
-		},function(value){
-		if (this._autoPlay !=value){
-			this._autoPlay=value;
-			if (this._autoPlay){
-				if (this._owner.onStage)
-					this.play(null,this.autoPlayRepeat,this.autoPlayDelay);
-			}
-			else{
-				if (!this._owner.onStage)
-					this.stop(false,true);
-			}
-		}
-	});
-
 	__getset(0,__proto,'playing',function(){
 		return this._playing;
+	});
+
+	__getset(0,__proto,'timeScale',function(){
+		return this._timeScale;
+		},function(value){
+		if(this._timeScale !=value){
+			this._timeScale=value;
+			if (this._playing){
+				var cnt=this._items.length;
+				for (var i=0;i < cnt;i++){
+					var item=this._items[i];
+					if (item.tweener !=null)
+						item.tweener.setTimeScale(value);
+					else if (item.type==10){
+						if(item.value.trans !=null)
+							item.value.trans.timeScale=value;
+					}
+					else if(item.type==7){
+						if(item.target !=null)
+							(item.target).timeScale=value;
+					}
+				}
+			}
+		}
 	});
 
 	Transition.__init$=function(){
@@ -5613,64 +5898,336 @@ var Transition=(function(){
 			TransitionActionType.Shake=11;
 			TransitionActionType.ColorFilter=12;
 			TransitionActionType.Skew=13;
-			TransitionActionType.Unknown=14;
+			TransitionActionType.Text=14;
+			TransitionActionType.Icon=15;
+			TransitionActionType.Unknown=16;
 			return TransitionActionType;
 		})()
 		//class TransitionItem
 		TransitionItem=(function(){
-			function TransitionItem(){
-				this.time=0;
+			function TransitionItem(type){
+				this.time=NaN;
 				this.targetId=null;
 				this.type=0;
-				this.duration=0;
-				this.value=null;
-				this.startValue=null;
-				this.endValue=null;
-				this.easeType=null;
-				this.repeat=0;
-				this.yoyo=false;
-				this.tween=false;
+				this.tweenConfig=null;
 				this.label=null;
-				this.label2=null;
+				this.value=null;
 				this.hook=null;
-				this.hook2=null;
-				this.tweenTimes=0;
 				this.tweener=null;
-				this.completed=false;
 				this.target=null;
-				this.filterCreated=false;
 				this.displayLockToken=0;
-				this.easeType=Ease.quadOut;
-				this.value=new TransitionValue();
-				this.startValue=new TransitionValue();
-				this.endValue=new TransitionValue();
+				this.type=type;
+				switch (type){
+					case 0:
+					case 1:
+					case 2:
+					case 3:
+					case 13:
+					case 4:
+					case 5:
+					case 6:
+					case 12:
+						this.value=new TValue();
+						break ;
+					case 7:
+						this.value=new TValue_Animation();
+						break ;
+					case 11:
+						this.value=new TValue_Shake();
+						break ;
+					case 9:
+						this.value=new TValue_Sound();
+						break ;
+					case 10:
+						this.value=new TValue_Transition();
+						break ;
+					case 8:
+						this.value=new TValue_Visible();
+						break ;
+					case 14:
+					case 15:
+						this.value=new TValue_Text();
+						break ;
+					}
 			}
 			__class(TransitionItem,'');
-			var __proto=TransitionItem.prototype;
-			__proto.__shake=function(trans){
-				trans.__shakeItem(this);
-			}
 			return TransitionItem;
 		})()
-		//class TransitionValue
-		TransitionValue=(function(){
-			function TransitionValue(){
-				this.f1=0;
-				this.f2=0;
-				this.f3=0;
-				this.f4=NaN;
-				this.i=0;
-				this.b=false;
-				this.s=null;
-				this.b1=true;
-				this.b2=true;
+		//class TweenConfig
+		TweenConfig=(function(){
+			function TweenConfig(){
+				this.duration=NaN;
+				this.easeType=0;
+				this.repeat=0;
+				this.yoyo=false;
+				this.startValue=null;
+				this.endValue=null;
+				this.endLabel=null;
+				this.endHook=null;
+				this.easeType=5;
+				this.startValue=new TValue();
+				this.endValue=new TValue();
 			}
-			__class(TransitionValue,'');
-			return TransitionValue;
+			__class(TweenConfig,'');
+			return TweenConfig;
+		})()
+		//class TValue_Visible
+		TValue_Visible=(function(){
+			function TValue_Visible(){
+				this.visible=false;
+			}
+			__class(TValue_Visible,'');
+			return TValue_Visible;
+		})()
+		//class TValue_Animation
+		TValue_Animation=(function(){
+			function TValue_Animation(){
+				this.frame=0;
+				this.playing=false;
+				this.flag=false;
+			}
+			__class(TValue_Animation,'');
+			return TValue_Animation;
+		})()
+		//class TValue_Sound
+		TValue_Sound=(function(){
+			function TValue_Sound(){
+				this.sound=null;
+				this.volume=NaN;
+				this.audioClip=null;
+			}
+			__class(TValue_Sound,'');
+			return TValue_Sound;
+		})()
+		//class TValue_Transition
+		TValue_Transition=(function(){
+			function TValue_Transition(){
+				this.transName=null;
+				this.playTimes=0;
+				this.trans=null;
+				this.stopTime=NaN;
+			}
+			__class(TValue_Transition,'');
+			return TValue_Transition;
+		})()
+		//class TValue_Shake
+		TValue_Shake=(function(){
+			function TValue_Shake(){
+				this.amplitude=NaN;
+				this.duration=NaN;
+				this.offsetX=NaN;
+				this.offsetY=NaN;
+				this.lastOffsetX=NaN;
+				this.lastOffsetY=NaN;
+			}
+			__class(TValue_Shake,'');
+			return TValue_Shake;
+		})()
+		//class TValue_Text
+		TValue_Text=(function(){
+			function TValue_Text(){
+				this.text=null;
+			}
+			__class(TValue_Text,'');
+			return TValue_Text;
+		})()
+		//class TValue
+		TValue=(function(){
+			function TValue(){
+				this.f1=NaN;
+				this.f2=NaN;
+				this.f3=NaN;
+				this.f4=NaN;
+				this.b1=false;
+				this.b2=false;
+				this.b1=this.b2=true;
+			}
+			__class(TValue,'');
+			return TValue;
 		})()
 	}
 
 	return Transition;
+})()
+
+
+//class fairygui.TranslationHelper
+var TranslationHelper=(function(){
+	function TranslationHelper(){}
+	__class(TranslationHelper,'fairygui.TranslationHelper');
+	TranslationHelper.loadFromXML=function(source){
+		TranslationHelper.strings={};
+		var xml=Utils.parseXMLFromString(source);
+		var resNode=TranslationHelper.findChildNode(xml,"resources");
+		var nodes=resNode.childNodes;
+		var length1=nodes.length;
+		for (var i1=0;i1 < length1;i1++){
+			var cxml=nodes[i1];
+			if (cxml.nodeName=="string"){
+				var key=cxml.getAttribute("name");
+				var text=cxml.textContent;
+				var i=key.indexOf("-");
+				if(i==-1)
+					continue ;
+				var key2=key.substr(0,i);
+				var key3=key.substr(i+1);
+				var col=TranslationHelper.strings[key2];
+				if(!col){
+					col={};
+					TranslationHelper.strings[key2]=col;
+				}
+				col[key3]=text;
+			}
+		}
+	}
+
+	TranslationHelper.translateComponent=function(item){
+		if(TranslationHelper.strings==null)
+			return;
+		var compStrings=TranslationHelper.strings[item.owner.id+item.id];
+		if(compStrings==null)
+			return;
+		var elementId,value;
+		var buffer=item.rawData;
+		var nextPos=0;
+		var itemCount=0;
+		var i=0,j=0,k=0;
+		var dataLen=0;
+		var curPos=0;
+		var valueCnt=0;
+		var page;
+		buffer.seek(0,2);
+		var childCount=buffer.getInt16();
+		for (i=0;i < childCount;i++){
+			dataLen=buffer.getInt16();
+			curPos=buffer.pos;
+			buffer.seek(curPos,0);
+			var type=buffer.readByte();
+			buffer.skip(4);
+			elementId=buffer.readS();
+			if (type==9){
+				if (buffer.seek(curPos,6))
+					type=buffer.readByte();
+			}
+			buffer.seek(curPos,1);
+			if((value=compStrings[elementId+"-tips"])!=null)
+				buffer.writeS(value);
+			buffer.seek(curPos,2);
+			var gearCnt=buffer.getInt16();
+			for (j=0;j < gearCnt;j++){
+				nextPos=buffer.getInt16();
+				nextPos+=buffer.pos;
+				if (buffer.readByte()==6){
+					buffer.skip(2);
+					valueCnt=buffer.getInt16();
+					for (k=0;k < valueCnt;k++){
+						page=buffer.readS();
+						if (page !=null){
+							if((value=compStrings[elementId+"-texts_"+k])!=null)
+								buffer.writeS(value);
+							else
+							buffer.skip(2);
+						}
+					}
+					if (buffer.readBool()&& (value=compStrings[elementId+"-texts_def"])!=null)
+						buffer.writeS(value);
+				}
+				buffer.pos=nextPos;
+			}
+			switch (type){
+				case 6:
+				case 7:
+				case 8:{
+						if ((value=compStrings[elementId])!=null){
+							buffer.seek(curPos,6);
+							buffer.writeS(value);
+						}
+						if ((value=compStrings[elementId+"-prompt"])!=null){
+							buffer.seek(curPos,4);
+							buffer.writeS(value);
+						}
+						break ;
+					}
+				case 10:{
+						buffer.seek(curPos,8);
+						buffer.skip(2);
+						itemCount=buffer.getInt16();
+						for (j=0;j<itemCount;j++){
+							nextPos=buffer.getInt16();
+							nextPos+=buffer.pos;
+							buffer.skip(2);
+							if ((value=compStrings[elementId+"-"+j])!=null)
+								buffer.writeS(value);
+							else
+							buffer.skip(2);
+							if ((value=compStrings[elementId+"-"+j+"-0"])!=null)
+								buffer.writeS(value);
+							buffer.pos=nextPos;
+						}
+						break ;
+					}
+				case 11:{
+						if (buffer.seek(curPos,6)&& buffer.readByte()==type){
+							if ((value=compStrings[elementId])!=null)
+								buffer.writeS(value);
+							else
+							buffer.skip(2);
+							buffer.skip(2);
+							if (buffer.readBool())
+								buffer.skip(4);
+							buffer.skip(4);
+							if (buffer.readBool()&& (value=compStrings[elementId+"-prompt"])!=null)
+								buffer.writeS(value);
+						}
+						break ;
+					}
+				case 12:{
+						if (buffer.seek(curPos,6)&& buffer.readByte()==type){
+							if ((value=compStrings[elementId])!=null)
+								buffer.writeS(value);
+							else
+							buffer.skip(2);
+							if ((value=compStrings[elementId+"-0"])!=null)
+								buffer.writeS(value);
+						}
+						break ;
+					}
+				case 13:{
+						if (buffer.seek(curPos,6)&& buffer.readByte()==type){
+							itemCount=buffer.getInt16();
+							for (j=0;j < itemCount;j++){
+								nextPos=buffer.getInt16();
+								nextPos+=buffer.pos;
+								if ((value=compStrings[elementId+"-"+j])!=null)
+									buffer.writeS(value);
+								buffer.pos=nextPos;
+							}
+							if ((value=compStrings[elementId])!=null)
+								buffer.writeS(value);
+						}
+						break ;
+					}
+				}
+			buffer.pos=curPos+dataLen;
+		}
+	}
+
+	TranslationHelper.findChildNode=function(xml,name){
+		var col=xml.childNodes;
+		var length1=col.length;
+		if (length1>0){
+			for (var i1=0;i1 < length1;i1++){
+				var cxml=col[i1];
+				if (cxml.nodeName==name){
+					return cxml;
+				}
+			}
+		}
+		return null;
+	}
+
+	TranslationHelper.strings=null;
+	return TranslationHelper;
 })()
 
 
@@ -6206,6 +6763,894 @@ var TreeView=(function(){
 })()
 
 
+//class fairygui.tween.EaseManager
+var EaseManager=(function(){
+	var Bounce;
+	function EaseManager(){}
+	__class(EaseManager,'fairygui.tween.EaseManager');
+	EaseManager.evaluate=function(easeType,time,duration,overshootOrAmplitude,period){
+		switch (easeType){
+			case 0:
+				return time / duration;
+			case 1:
+				return-Math.cos(time / duration *EaseManager._PiOver2)+1;
+			case 2:
+				return Math.sin(time / duration *EaseManager._PiOver2);
+			case 3:
+				return-0.5 *(Math.cos(Math.PI *time / duration)-1);
+			case 4:
+				return (time /=duration)*time;
+			case 5:
+				return-(time /=duration)*(time-2);
+			case 6:
+				if ((time /=duration *0.5)< 1)return 0.5 *time *time;
+				return-0.5 *((--time)*(time-2)-1);
+			case 7:
+				return (time /=duration)*time *time;
+			case 8:
+				return ((time=time / duration-1)*time *time+1);
+			case 9:
+				if ((time /=duration *0.5)< 1)return 0.5 *time *time *time;
+				return 0.5 *((time-=2)*time *time+2);
+			case 10:
+				return (time /=duration)*time *time *time;
+			case 11:
+				return-((time=time / duration-1)*time *time *time-1);
+			case 12:
+				if ((time /=duration *0.5)< 1)return 0.5 *time *time *time *time;
+				return-0.5 *((time-=2)*time *time *time-2);
+			case 13:
+				return (time /=duration)*time *time *time *time;
+			case 14:
+				return ((time=time / duration-1)*time *time *time *time+1);
+			case 15:
+				if ((time /=duration *0.5)< 1)return 0.5 *time *time *time *time *time;
+				return 0.5 *((time-=2)*time *time *time *time+2);
+			case 16:
+				return (time==0)? 0 :Math.pow(2,10 *(time / duration-1));
+			case 17:
+				if (time==duration)return 1;
+				return (-Math.pow(2,-10 *time / duration)+1);
+			case 18:
+				if (time==0)return 0;
+				if (time==duration)return 1;
+				if ((time /=duration *0.5)< 1)return 0.5 *Math.pow(2,10 *(time-1));
+				return 0.5 *(-Math.pow(2,-10 *--time)+2);
+			case 19:
+				return-(Math.sqrt(1-(time /=duration)*time)-1);
+			case 20:
+				return Math.sqrt(1-(time=time / duration-1)*time);
+			case 21:
+				if ((time /=duration *0.5)< 1)return-0.5 *(Math.sqrt(1-time *time)-1);
+				return 0.5 *(Math.sqrt(1-(time-=2)*time)+1);
+			case 22:;
+				var s0=NaN;
+				if (time==0)return 0;
+				if ((time /=duration)==1)return 1;
+				if (period==0)period=duration *0.3;
+				if (overshootOrAmplitude < 1){
+					overshootOrAmplitude=1;
+					s0=period / 4;
+				}
+				else s0=period / EaseManager._TwoPi *Math.asin(1 / overshootOrAmplitude);
+				return-(overshootOrAmplitude *Math.pow(2,10 *(time-=1))*Math.sin((time *duration-s0)*EaseManager._TwoPi / period));
+			case 23:;
+				var s1=NaN;
+				if (time==0)return 0;
+				if ((time /=duration)==1)return 1;
+				if (period==0)period=duration *0.3;
+				if (overshootOrAmplitude < 1){
+					overshootOrAmplitude=1;
+					s1=period / 4;
+				}
+				else s1=period / EaseManager._TwoPi *Math.asin(1 / overshootOrAmplitude);
+				return (overshootOrAmplitude *Math.pow(2,-10 *time)*Math.sin((time *duration-s1)*EaseManager._TwoPi / period)+1);
+			case 24:;
+				var s=NaN;
+				if (time==0)return 0;
+				if ((time /=duration *0.5)==2)return 1;
+				if (period==0)period=duration *(0.3 *1.5);
+				if (overshootOrAmplitude < 1){
+					overshootOrAmplitude=1;
+					s=period / 4;
+				}
+				else s=period / EaseManager._TwoPi *Math.asin(1 / overshootOrAmplitude);
+				if (time < 1)return-0.5 *(overshootOrAmplitude *Math.pow(2,10 *(time-=1))*Math.sin((time *duration-s)*EaseManager._TwoPi / period));
+				return overshootOrAmplitude *Math.pow(2,-10 *(time-=1))*Math.sin((time *duration-s)*EaseManager._TwoPi / period)*0.5+1;
+			case 25:
+				return (time /=duration)*time *((overshootOrAmplitude+1)*time-overshootOrAmplitude);
+			case 26:
+				return ((time=time / duration-1)*time *((overshootOrAmplitude+1)*time+overshootOrAmplitude)+1);
+			case 27:
+				if ((time /=duration *0.5)< 1)return 0.5 *(time *time *(((overshootOrAmplitude *=(1.525))+1)*time-overshootOrAmplitude));
+				return 0.5 *((time-=2)*time *(((overshootOrAmplitude *=(1.525))+1)*time+overshootOrAmplitude)+2);
+			case 28:
+				return Bounce.easeIn(time,duration);
+			case 29:
+				return Bounce.easeOut(time,duration);
+			case 30:
+				return Bounce.easeInOut(time,duration);
+			default :
+				return-(time /=duration)*(time-2);
+			}
+	}
+
+	__static(EaseManager,
+	['_PiOver2',function(){return this._PiOver2=Math.PI *0.5;},'_TwoPi',function(){return this._TwoPi=Math.PI *2;}
+	]);
+	EaseManager.__init$=function(){
+		/// This class contains a C# port of the easing equations created by Robert Penner (http://robertpenner.com/easing).
+		//class Bounce
+		Bounce=(function(){
+			function Bounce(){}
+			__class(Bounce,'');
+			Bounce.easeIn=function(time,duration){
+				return 1-Bounce.easeOut(duration-time,duration);
+			}
+			Bounce.easeOut=function(time,duration){
+				if ((time /=duration)< (1 / 2.75)){
+					return (7.5625 *time *time);
+				}
+				if (time < (2 / 2.75)){
+					return (7.5625 *(time-=(1.5 / 2.75))*time+0.75);
+				}
+				if (time < (2.5 / 2.75)){
+					return (7.5625 *(time-=(2.25 / 2.75))*time+0.9375);
+				}
+				return (7.5625 *(time-=(2.625 / 2.75))*time+0.984375);
+			}
+			Bounce.easeInOut=function(time,duration){
+				if (time < duration *0.5){
+					return Bounce.easeIn(time *2,duration)*0.5;
+				}
+				return Bounce.easeOut(time *2-duration,duration)*0.5+0.5;
+			}
+			return Bounce;
+		})()
+	}
+
+	return EaseManager;
+})()
+
+
+//class fairygui.tween.EaseType
+var EaseType=(function(){
+	function EaseType(){}
+	__class(EaseType,'fairygui.tween.EaseType');
+	EaseType.Linear=0;
+	EaseType.SineIn=1;
+	EaseType.SineOut=2;
+	EaseType.SineInOut=3;
+	EaseType.QuadIn=4;
+	EaseType.QuadOut=5;
+	EaseType.QuadInOut=6;
+	EaseType.CubicIn=7;
+	EaseType.CubicOut=8;
+	EaseType.CubicInOut=9;
+	EaseType.QuartIn=10;
+	EaseType.QuartOut=11;
+	EaseType.QuartInOut=12;
+	EaseType.QuintIn=13;
+	EaseType.QuintOut=14;
+	EaseType.QuintInOut=15;
+	EaseType.ExpoIn=16;
+	EaseType.ExpoOut=17;
+	EaseType.ExpoInOut=18;
+	EaseType.CircIn=19;
+	EaseType.CircOut=20;
+	EaseType.CircInOut=21;
+	EaseType.ElasticIn=22;
+	EaseType.ElasticOut=23;
+	EaseType.ElasticInOut=24;
+	EaseType.BackIn=25;
+	EaseType.BackOut=26;
+	EaseType.BackInOut=27;
+	EaseType.BounceIn=28;
+	EaseType.BounceOut=29;
+	EaseType.BounceInOut=30;
+	EaseType.Custom=31;
+	return EaseType;
+})()
+
+
+//class fairygui.tween.GTween
+var GTween=(function(){
+	function GTween(){}
+	__class(GTween,'fairygui.tween.GTween');
+	GTween.to=function(start,end,duration){
+		return TweenManager.createTween()._to(start,end,duration);
+	}
+
+	GTween.to2=function(start,start2,end,end2,duration){
+		return TweenManager.createTween()._to2(start,start2,end,end2,duration);
+	}
+
+	GTween.to3=function(start,start2,start3,end,end2,end3,duration){
+		return TweenManager.createTween()._to3(start,start2,start3,end,end2,end3,duration);
+	}
+
+	GTween.to4=function(start,start2,start3,start4,end,end2,end3,end4,duration){
+		return TweenManager.createTween()._to4(start,start2,start3,start4,end,end2,end3,end4,duration);
+	}
+
+	GTween.toColor=function(start,end,duration){
+		return TweenManager.createTween()._toColor(start,end,duration);
+	}
+
+	GTween.delayedCall=function(delay){
+		return TweenManager.createTween().setDelay(delay);
+	}
+
+	GTween.shake=function(startX,startY,amplitude,duration){
+		return TweenManager.createTween()._shake(startX,startY,amplitude,duration);
+	}
+
+	GTween.isTweening=function(target,propType){
+		return TweenManager.isTweening(target,propType);
+	}
+
+	GTween.kill=function(target,complete,propType){
+		(complete===void 0)&& (complete=false);
+		TweenManager.killTweens(target,false,null);
+	}
+
+	GTween.getTween=function(target,propType){
+		return TweenManager.getTween(target,propType);
+	}
+
+	GTween.catchCallbackExceptions=true;
+	return GTween;
+})()
+
+
+//class fairygui.tween.GTweener
+var GTweener=(function(){
+	function GTweener(){
+		this._target=null;
+		this._propType=null;
+		this._killed=false;
+		this._paused=false;
+		this._delay=NaN;
+		this._duration=NaN;
+		this._breakpoint=NaN;
+		this._easeType=0;
+		this._easeOvershootOrAmplitude=NaN;
+		this._easePeriod=NaN;
+		this._repeat=0;
+		this._yoyo=false;
+		this._timeScale=NaN;
+		this._snapping=false;
+		this._userData=null;
+		this._onUpdate=null;
+		this._onUpdateCaller=null;
+		this._onStart=null;
+		this._onStartCaller=null;
+		this._onComplete=null;
+		this._onCompleteCaller=null;
+		this._startValue=null;
+		this._endValue=null;
+		this._value=null;
+		this._deltaValue=null;
+		this._valueSize=0;
+		this._started=false;
+		this._ended=0;
+		this._elapsedTime=NaN;
+		this._normalizedTime=NaN;
+		this._startValue=new TweenValue();
+		this._endValue=new TweenValue();
+		this._value=new TweenValue();
+		this._deltaValue=new TweenValue();
+		this._reset();
+	}
+
+	__class(GTweener,'fairygui.tween.GTweener');
+	var __proto=GTweener.prototype;
+	__proto.setDelay=function(value){
+		this._delay=value;
+		return this;
+	}
+
+	__proto.setDuration=function(value){
+		this._duration=value;
+		return this;
+	}
+
+	__proto.setBreakpoint=function(value){
+		this._breakpoint=value;
+		return this;
+	}
+
+	__proto.setEase=function(value){
+		this._easeType=value;
+		return this;
+	}
+
+	__proto.setEasePeriod=function(value){
+		this._easePeriod=value;
+		return this;
+	}
+
+	__proto.setEaseOvershootOrAmplitude=function(value){
+		this._easeOvershootOrAmplitude=value;
+		return this;
+	}
+
+	__proto.setRepeat=function(repeat,yoyo){
+		(yoyo===void 0)&& (yoyo=false);
+		this._repeat=repeat;
+		this._yoyo=yoyo;
+		return this;
+	}
+
+	__proto.setTimeScale=function(value){
+		this._timeScale=value;
+		return this;
+	}
+
+	__proto.setSnapping=function(value){
+		this._snapping=value;
+		return this;
+	}
+
+	__proto.setTarget=function(value,propType){
+		this._target=value;
+		this._propType=propType;
+		return this;
+	}
+
+	__proto.setUserData=function(value){
+		this._userData=value;
+		return this;
+	}
+
+	__proto.onUpdate=function(callback,caller){
+		this._onUpdate=callback;
+		this._onUpdateCaller=caller;
+		return this;
+	}
+
+	__proto.onStart=function(callback,caller){
+		this._onStart=callback;
+		this._onStartCaller=caller;
+		return this;
+	}
+
+	__proto.onComplete=function(callback,caller){
+		this._onComplete=callback;
+		this._onCompleteCaller=caller;
+		return this;
+	}
+
+	__proto.setPaused=function(paused){
+		this._paused=paused;
+		return this;
+	}
+
+	/**
+	*seek position of the tween,in seconds.
+	*/
+	__proto.seek=function(time){
+		if (this._killed)
+			return;
+		this._elapsedTime=time;
+		if (this._elapsedTime < this._delay){
+			if (this._started)
+				this._elapsedTime=this._delay;
+			else
+			return;
+		}
+		this.update();
+	}
+
+	__proto.kill=function(complete){
+		(complete===void 0)&& (complete=false);
+		if (this._killed)
+			return;
+		if (complete){
+			if (this._ended==0){
+				if (this._breakpoint >=0)
+					this._elapsedTime=this._delay+this._breakpoint;
+				else if (this._repeat >=0)
+				this._elapsedTime=this._delay+this._duration *(this._repeat+1);
+				else
+				this._elapsedTime=this._delay+this._duration *2;
+				this.update();
+			}
+			this.callCompleteCallback();
+		}
+		this._killed=true;
+	}
+
+	__proto._to=function(start,end,duration){
+		this._valueSize=1;
+		this._startValue.x=start;
+		this._endValue.x=end;
+		this._duration=duration;
+		return this;
+	}
+
+	__proto._to2=function(start,start2,end,end2,duration){
+		this._valueSize=2;
+		this._startValue.x=start;
+		this._endValue.x=end;
+		this._startValue.y=start2;
+		this._endValue.y=end2;
+		this._duration=duration;
+		return this;
+	}
+
+	__proto._to3=function(start,start2,start3,end,end2,end3,duration){
+		this._valueSize=3;
+		this._startValue.x=start;
+		this._endValue.x=end;
+		this._startValue.y=start2;
+		this._endValue.y=end2;
+		this._startValue.z=start3;
+		this._endValue.z=end3;
+		this._duration=duration;
+		return this;
+	}
+
+	__proto._to4=function(start,start2,start3,start4,end,end2,end3,end4,duration){
+		this._valueSize=4;
+		this._startValue.x=start;
+		this._endValue.x=end;
+		this._startValue.y=start2;
+		this._endValue.y=end2;
+		this._startValue.z=start3;
+		this._endValue.z=end3;
+		this._startValue.w=start4;
+		this._endValue.w=end4;
+		this._duration=duration;
+		return this;
+	}
+
+	__proto._toColor=function(start,end,duration){
+		this._valueSize=4;
+		this._startValue.color=start;
+		this._endValue.color=end;
+		this._duration=duration;
+		return this;
+	}
+
+	__proto._shake=function(startX,startY,amplitude,duration){
+		this._valueSize=5;
+		this._startValue.x=startX;
+		this._startValue.y=startY;
+		this._startValue.w=amplitude;
+		this._duration=duration;
+		this._easeType=0;
+		return this;
+	}
+
+	__proto._init=function(){
+		this._delay=0;
+		this._duration=0;
+		this._breakpoint=-1;
+		this._easeType=5;
+		this._timeScale=1;
+		this._easePeriod=0;
+		this._easeOvershootOrAmplitude=1.70158;
+		this._snapping=false;
+		this._repeat=0;
+		this._yoyo=false;
+		this._valueSize=0;
+		this._started=false;
+		this._paused=false;
+		this._killed=false;
+		this._elapsedTime=0;
+		this._normalizedTime=0;
+		this._ended=0;
+	}
+
+	__proto._reset=function(){
+		this._target=null;
+		this._userData=null;
+		this._onStart=this._onUpdate=this._onComplete=null;
+		this._onStartCaller=this._onUpdateCaller=this._onCompleteCaller=null;
+	}
+
+	__proto._update=function(dt){
+		if (this._timeScale !=1)
+			dt *=this._timeScale;
+		if (dt==0)
+			return;
+		if (this._ended !=0){
+			this.callCompleteCallback();
+			this._killed=true;
+			return;
+		}
+		this._elapsedTime+=dt;
+		this.update();
+		if (this._ended !=0){
+			if (!this._killed){
+				this.callCompleteCallback();
+				this._killed=true;
+			}
+		}
+	}
+
+	__proto.update=function(){
+		this._ended=0;
+		if (this._valueSize==0){
+			if (this._elapsedTime >=this._delay+this._duration)
+				this._ended=1;
+			return;
+		}
+		if (!this._started){
+			if (this._elapsedTime < this._delay)
+				return;
+			this._started=true;
+			this.callStartCallback();
+			if (this._killed)
+				return;
+		};
+		var reversed=false;
+		var tt=this._elapsedTime-this._delay;
+		if (this._breakpoint >=0 && tt >=this._breakpoint){
+			tt=this._breakpoint;
+			this._ended=2;
+		}
+		if (this._repeat !=0){
+			var round=Math.floor(tt / this._duration);
+			tt-=this._duration *round;
+			if (this._yoyo)
+				reversed=round % 2==1;
+			if (this._repeat > 0 && this._repeat-round < 0){
+				if (this._yoyo)
+					reversed=this._repeat % 2==1;
+				tt=this._duration;
+				this._ended=1;
+			}
+		}
+		else if (tt >=this._duration){
+			tt=this._duration;
+			this._ended=1;
+		}
+		this._normalizedTime=EaseManager.evaluate(this._easeType,reversed ? (this._duration-tt):tt,this._duration,
+		this._easeOvershootOrAmplitude,this._easePeriod);
+		this._value.setZero();
+		this._deltaValue.setZero();
+		if (this._valueSize==5){
+			if (this._ended==0){
+				var r=this._startValue.w*(1-this._normalizedTime);
+				var rx=(Math.random()*2-1)*r;
+				var ry=(Math.random()*2-1)*r;
+				rx=rx > 0 ? Math.ceil(rx):Math.floor(rx);
+				ry=ry > 0 ? Math.ceil(ry):Math.floor(ry);
+				this._deltaValue.x=rx;
+				this._deltaValue.y=ry;
+				this._value.x=this._startValue.x+rx;
+				this._value.y=this._startValue.y+ry;
+			}
+			else{
+				this._value.x=this._startValue.x;
+				this._value.y=this._startValue.y;
+			}
+		}
+		else{
+			for (var i=0;i < this._valueSize;i++){
+				var n1=this._startValue.getField(i);
+				var n2=this._endValue.getField(i);
+				var f=n1+(n2-n1)*this._normalizedTime;
+				if (this._snapping)
+					f=Math.round(f);
+				this._deltaValue.setField(i,f-this._value.getField(i));
+				this._value.setField(i,f);
+			}
+		}
+		if (this._target !=null && this._propType !=null){
+			if((typeof this._propType=='function')){
+				switch(this._valueSize){
+					case 1:
+						this._propType.call(this._target,this._value.x);
+						break ;
+					case 2:
+						this._propType.call(this._target,this._value.x,this._value.y);
+						break ;
+					case 3:
+						this._propType.call(this._target,this._value.x,this._value.y,this._value.z);
+						break ;
+					case 4:
+						this._propType.call(this._target,this._value.x,this._value.y,this._value.z,this._value.w);
+						break ;
+					case 5:
+						this._propType.call(this._target,this._value.color);
+						break ;
+					case 6:
+						this._propType.call(this._target,this._value.x,this._value.y);
+						break ;
+					}
+			}
+			else{
+				if(this._valueSize==5)
+					this._target[this._propType]=this._value.color;
+				else
+				this._target[this._propType]=this._value.x;
+			}
+		}
+		this.callUpdateCallback();
+	}
+
+	__proto.callStartCallback=function(){
+		if (this._onStart !=null){
+			if(GTween.catchCallbackExceptions){
+				try{
+					this._onStart.call(this._onStartCaller,this);
+				}
+				catch(err){
+					console.log("FairyGUI: error in start callback > "+err.message);
+				}
+			}
+			else
+			this._onStart.call(this._onStartCaller,this);
+		}
+	}
+
+	__proto.callUpdateCallback=function(){
+		if (this._onUpdate !=null){
+			if(GTween.catchCallbackExceptions){
+				try{
+					this._onUpdate.call(this._onUpdateCaller,this);
+				}
+				catch(err){
+					console.log("FairyGUI: error in update callback > "+err.message);
+				}
+			}
+			else
+			this._onUpdate.call(this._onUpdateCaller,this);
+		}
+	}
+
+	__proto.callCompleteCallback=function(){
+		if (this._onComplete !=null){
+			if(GTween.catchCallbackExceptions){
+				try{
+					this._onComplete.call(this._onCompleteCaller,this);
+				}
+				catch(err){
+					console.log("FairyGUI: error in complete callback > "+err.message);
+				}
+			}
+			else
+			this._onComplete.call(this._onCompleteCaller,this);
+		}
+	}
+
+	__getset(0,__proto,'target',function(){
+		return this._target;
+	});
+
+	__getset(0,__proto,'delay',function(){
+		return this._delay;
+	});
+
+	__getset(0,__proto,'duration',function(){
+		return this._duration;
+	});
+
+	__getset(0,__proto,'value',function(){
+		return this._value;
+	});
+
+	__getset(0,__proto,'userData',function(){
+		return this._userData;
+	});
+
+	__getset(0,__proto,'repeat',function(){
+		return this._repeat;
+	});
+
+	__getset(0,__proto,'startValue',function(){
+		return this._startValue;
+	});
+
+	__getset(0,__proto,'endValue',function(){
+		return this._endValue;
+	});
+
+	__getset(0,__proto,'deltaValue',function(){
+		return this._deltaValue;
+	});
+
+	__getset(0,__proto,'normalizedTime',function(){
+		return this._normalizedTime;
+	});
+
+	__getset(0,__proto,'completed',function(){
+		return this._ended !=0;
+	});
+
+	__getset(0,__proto,'allCompleted',function(){
+		return this._ended==1;
+	});
+
+	return GTweener;
+})()
+
+
+//class fairygui.tween.TweenManager
+var TweenManager=(function(){
+	function TweenManager(){}
+	__class(TweenManager,'fairygui.tween.TweenManager');
+	TweenManager.createTween=function(){
+		if (!TweenManager._inited){
+			Laya.timer.frameLoop(1,null,TweenManager.update);
+			TweenManager._inited=true;
+		};
+		var tweener;
+		var cnt=TweenManager._tweenerPool.length;
+		if (cnt > 0){
+			tweener=TweenManager._tweenerPool.pop();
+		}
+		else
+		tweener=new GTweener();
+		tweener._init();
+		TweenManager._activeTweens[TweenManager._totalActiveTweens++]=tweener;
+		if (TweenManager._totalActiveTweens==TweenManager._activeTweens.length)
+			TweenManager._activeTweens.length=TweenManager._activeTweens.length+Math.ceil(TweenManager._activeTweens.length *0.5);
+		return tweener;
+	}
+
+	TweenManager.isTweening=function(target,propType){
+		if (target==null)
+			return false;
+		var anyType=propType==null;
+		for (var i=0;i < TweenManager._totalActiveTweens;i++){
+			var tweener=TweenManager._activeTweens[i];
+			if (tweener !=null && tweener.target==target && !tweener._killed
+				&& (anyType || tweener._propType==propType))
+			return true;
+		}
+		return false;
+	}
+
+	TweenManager.killTweens=function(target,completed,propType){
+		if (target==null)
+			return false;
+		var flag=false;
+		var cnt=TweenManager._totalActiveTweens;
+		var anyType=propType==null;
+		for (var i=0;i < cnt;i++){
+			var tweener=TweenManager._activeTweens[i];
+			if (tweener !=null && tweener.target==target && !tweener._killed
+				&& (anyType || tweener._propType==propType)){
+				tweener.kill(completed);
+				flag=true;
+			}
+		}
+		return flag;
+	}
+
+	TweenManager.getTween=function(target,propType){
+		if (target==null)
+			return null;
+		var cnt=TweenManager._totalActiveTweens;
+		var anyType=propType==null;
+		for (var i=0;i < cnt;i++){
+			var tweener=TweenManager._activeTweens[i];
+			if (tweener !=null && tweener.target==target && !tweener._killed
+				&& (anyType || tweener._propType==propType)){
+				return tweener;
+			}
+		}
+		return null;
+	}
+
+	TweenManager.update=function(){
+		var dt=Laya.timer.delta/1000;
+		var cnt=TweenManager._totalActiveTweens;
+		var freePosStart=-1;
+		var freePosCount=0;
+		for (var i=0;i < cnt;i++){
+			var tweener=TweenManager._activeTweens[i];
+			if (tweener==null){
+				if (freePosStart==-1)
+					freePosStart=i;
+				freePosCount++;
+			}
+			else if (tweener._killed){
+				tweener._reset();
+				TweenManager._tweenerPool.push(tweener);
+				TweenManager._activeTweens[i]=null;
+				if (freePosStart==-1)
+					freePosStart=i;
+				freePosCount++;
+			}
+			else{
+				if(!tweener._paused)
+					tweener._update(dt);
+				if (freePosStart !=-1){
+					TweenManager._activeTweens[freePosStart]=tweener;
+					TweenManager._activeTweens[i]=null;
+					freePosStart++;
+				}
+			}
+		}
+		if (freePosStart >=0){
+			if (TweenManager._totalActiveTweens !=cnt){
+				var j=cnt;
+				cnt=TweenManager._totalActiveTweens-cnt;
+				for (i=0;i < cnt;i++)
+				TweenManager._activeTweens[freePosStart++]=TweenManager._activeTweens[j++];
+			}
+			TweenManager._totalActiveTweens=freePosStart;
+		}
+	}
+
+	TweenManager._tweenerPool=[];
+	TweenManager._totalActiveTweens=0;
+	TweenManager._inited=false;
+	__static(TweenManager,
+	['_activeTweens',function(){return this._activeTweens=new Array(30);}
+	]);
+	return TweenManager;
+})()
+
+
+//class fairygui.tween.TweenValue
+var TweenValue=(function(){
+	function TweenValue(){
+		this.x=NaN;
+		this.y=NaN;
+		this.z=NaN;
+		this.w=NaN;
+		this.x=this.y=this.z=this.w=0;
+	}
+
+	__class(TweenValue,'fairygui.tween.TweenValue');
+	var __proto=TweenValue.prototype;
+	__proto.getField=function(index){
+		switch (index){
+			case 0:
+				return this.x;
+			case 1:
+				return this.y;
+			case 2:
+				return this.z;
+			case 3:
+				return this.w;
+			default :
+				throw new Error("Index out of bounds: "+index);
+			}
+	}
+
+	__proto.setField=function(index,value){
+		switch (index){
+			case 0:
+				this.x=value;
+				break ;
+			case 1:
+				this.y=value;
+				break ;
+			case 2:
+				this.z=value;
+				break ;
+			case 3:
+				this.w=value;
+				break ;
+			default :
+				throw new Error("Index out of bounds: "+index);
+			}
+	}
+
+	__proto.setZero=function(){
+		this.x=this.y=this.z=this.w=0;
+	}
+
+	__getset(0,__proto,'color',function(){
+		return (this.w<<24)+(this.x<<16)+(this.y<<8)+this.z;
+		},function(value){
+		this.x=(value & 0xFF0000)>>16;
+		this.y=(value & 0x00FF00)>>8;
+		this.z=(value & 0x0000FF);
+		this.w=(value & 0xFF000000)>>24;
+	});
+
+	return TweenValue;
+})()
+
+
 //class fairygui.UIConfig
 var UIConfig$1=(function(){
 	function UIConfig(){}
@@ -6263,69 +7708,52 @@ var UIObjectFactory=(function(){
 	}
 
 	UIObjectFactory.newObject=function(pi){
-		switch (pi.type){
-			case 0:
-				return new GImage();
-			case 2:
-				return new GMovieClip();
-			case 4:{
-					var cls=pi.extensionType;
-					if (cls)
-						return new cls();
-					var xml=pi.owner.getItemAsset(pi);
-					var extention=xml.getAttribute("extention");
-					if(extention !=null){
-					switch(extention){
-						case "Button":
-							return new GButton();
-						case "Label":
-							return new GLabel();
-						case "ProgressBar":
-							return new GProgressBar();
-						case "Slider":
-							return new GSlider();
-						case "ScrollBar":
-							return new GScrollBar();
-						case "ComboBox":
-							return new GComboBox();
-						default :
-							return new GComponent();
-						}
-				}
-				else
-				return new GComponent();
-			}
-		}
-		return null;
+		if(pi.extensionType!=null)
+			return new pi.extensionType();
+		else
+		return UIObjectFactory.newObject2(pi.objectType);
 	}
 
 	UIObjectFactory.newObject2=function(type){
 		switch (type){
-			case "image":
+			case 0:
 				return new GImage();
-			case "movieclip":
+			case 1:
 				return new GMovieClip();
-			case "component":
+			case 9:
 				return new GComponent();
-			case "text":
+			case 6:
 				return new GBasicTextField();
-			case "richtext":
+			case 7:
 				return new GRichTextField();
-			case "inputtext":
+			case 8:
 				return new GTextInput();
-			case "group":
+			case 5:
 				return new GGroup();
-			case "list":
+			case 10:
 				return new GList();
-			case "graph":
+			case 3:
 				return new GGraph();
-			case "loader":
+			case 4:
 				if (fairygui.UIObjectFactory.loaderType !=null)
 					return new fairygui.UIObjectFactory.loaderType();
 				else
 				return new GLoader();
+			case 12:
+				return new GButton();
+			case 11:
+				return new GLabel();
+			case 14:
+				return new GProgressBar();
+			case 15:
+				return new GSlider();
+			case 16:
+				return new GScrollBar();
+			case 13:
+				return new GComboBox();
+			default :
+				return null;
 			}
-		return null;
 	}
 
 	UIObjectFactory.packageItemExtensions={};
@@ -6340,193 +7768,157 @@ var UIPackage=(function(){
 	function UIPackage(){
 		this._id=null;
 		this._name=null;
-		this._basePath=null;
 		this._items=null;
 		this._itemsById=null;
 		this._itemsByName=null;
-		this._resKey=null;
-		this._resData=null;
 		this._customId=null;
 		this._sprites=null;
-		this._hitTestDatas=null;
 		this._items=[];
+		this._itemsById={};
+		this._itemsByName={};
 		this._sprites={};
-		this._hitTestDatas={};
 	}
 
 	__class(UIPackage,'fairygui.UIPackage');
 	var __proto=UIPackage.prototype;
-	__proto.create=function(resKey,descData){
-		this._resKey=resKey;
-		this.loadPackage(descData);
-	}
-
-	__proto.loadPackage=function(descData){
-		var str;
-		var arr;
-		if(!descData)
-			descData=AssetProxy.inst.getRes(this._resKey+"."+UIConfig$1.packageFileExtension);
-		this.decompressPackage(descData);
-		str=this.getDesc("sprites.bytes");
-		arr=str.split("\n");
-		var cnt=arr.length;
-		for(var i=1;i < cnt;i++){
-			str=arr[i];
-			if(!str)
-				continue ;
-			var arr2=str.split(" ");
-			var sprite=new AtlasSprite();
-			var itemId=arr2[0];
-			var binIndex=parseInt(arr2[1]);
-			if(binIndex >=0)
-				sprite.atlas="atlas"+binIndex;
-			else {
-				var pos=itemId.indexOf("_");
-				if(pos==-1)
-					sprite.atlas="atlas_"+itemId;
-				else
-				sprite.atlas="atlas_"+itemId.substr(0,pos);
-			}
-			sprite.rect.x=parseInt(arr2[2]);
-			sprite.rect.y=parseInt(arr2[3]);
-			sprite.rect.width=parseInt(arr2[4]);
-			sprite.rect.height=parseInt(arr2[5]);
-			sprite.rotated=arr2[6]=="1";
-			this._sprites[itemId]=sprite;
-		}
-		str=this.getDesc("hittest.bytes");
-		if(str!=null){
-			var ba=ToolSet.base64Decode(str);
-			ba.endian="bigEndian";
-			while(ba.bytesAvailable){
-				var hitTestData=new PixelHitTestData();
-				this._hitTestDatas[ba.readUTFString()]=hitTestData;
-				hitTestData.load(ba);
-			}
-		}
-		str=this.getDesc("package.xml");
-		var xml=Utils.parseXMLFromString(str);
-		var rootNode=xml.firstChild;
-		this._id=rootNode.getAttribute("id");
-		this._name=rootNode.getAttribute("name");
-		var resources=ToolSet.findChildNode(rootNode,"resources").childNodes;
-		this._itemsById={};
-		this._itemsByName={};
+	__proto.loadPackage=function(buffer,resKey){
+		if (buffer.getUint32()!=0x46475549)
+			throw new Error("FairyGUI: old package format found in '"+resKey+"'");
+		buffer.version=buffer.getInt32();
+		var compressed=buffer.readBool();
+		this._id=buffer.readUTFString();
+		this._name=buffer.readUTFString();
+		buffer.skip(20);
+		if(compressed){
+			var buf=new Uint8Array(buffer.buffer,buffer.pos,buffer.length-buffer.pos);
+			var inflater=new Zlib.RawInflate(buf);buf=inflater.decompress();;
+			buffer=new ByteBuffer(buf);
+		};
+		var indexTablePos=buffer.pos;
+		var cnt=0;
+		var i=0;
+		var nextPos=0;
+		buffer.seek(indexTablePos,4);
+		cnt=buffer.getInt32();
+		var stringTable=__newvec(cnt);
+		for (i=0;i < cnt;i++)
+		stringTable[i]=buffer.readUTFString();
+		buffer.stringTable=stringTable;
+		buffer.seek(indexTablePos,1);
 		var pi;
-		var cxml;
-		var length1=resources.length;
-		for(var i1=0;i1 < length1;i1++){
-			cxml=resources[i1];
-			if(cxml.nodeType!=1)
-				continue ;
+		resKey=resKey+"_";
+		cnt=buffer.getUint16();
+		for (i=0;i < cnt;i++){
+			nextPos=buffer.getInt32();
+			nextPos+=buffer.pos;
 			pi=new PackageItem();
 			pi.owner=this;
-			pi.type=PackageItemType.parse(cxml.nodeName);
-			pi.id=cxml.getAttribute("id");
-			pi.name=cxml.getAttribute("name");
-			pi.file=cxml.getAttribute("file");
-			str=cxml.getAttribute("size");
-			if(str){
-				arr=str.split(",");
-				pi.width=parseInt(arr[0]);
-				pi.height=parseInt(arr[1]);
-			}
-			switch(pi.type){
+			pi.type=buffer.readByte();
+			pi.id=buffer.readS();
+			pi.name=buffer.readS();
+			buffer.readS();
+			pi.file=buffer.readS();
+			buffer.readBool();
+			pi.width=buffer.getInt32();
+			pi.height=buffer.getInt32();
+			switch (pi.type){
 				case 0:{
-						str=cxml.getAttribute("scale");
-						if(str=="9grid"){
+						pi.objectType=0;
+						var scaleOption=buffer.readByte();
+						if (scaleOption==1){
 							pi.scale9Grid=new laya.maths.Rectangle();
-							str=cxml.getAttribute("scale9grid");
-							if(str){
-								arr=str.split(",");
-								pi.scale9Grid.x=parseInt(arr[0]);
-								pi.scale9Grid.y=parseInt(arr[1]);
-								pi.scale9Grid.width=parseInt(arr[2]);
-								pi.scale9Grid.height=parseInt(arr[3]);
-								str=cxml.getAttribute("gridTile");
-								if(str)
-									pi.tileGridIndice=parseInt(str);
-							}
+							pi.scale9Grid.x=buffer.getInt32();
+							pi.scale9Grid.y=buffer.getInt32();
+							pi.scale9Grid.width=buffer.getInt32();
+							pi.scale9Grid.height=buffer.getInt32();
+							pi.tileGridIndice=buffer.getInt32();
 						}
-						else if(str=="tile"){
-							pi.scaleByTile=true;
-						}
-						str=cxml.getAttribute("smoothing");
-						pi.smoothing=str !="false";
+						else if (scaleOption==2)
+						pi.scaleByTile=true;
+						pi.smoothing=buffer.readBool();
+						break ;
+					}
+				case 1:{
+						pi.smoothing=buffer.readBool();
+						pi.objectType=1;
+						pi.rawData=buffer.readBuffer();
+						break ;
+					}
+				case 5:{
+						pi.rawData=buffer.readBuffer();
+						break ;
+					}
+				case 3:{
+						var extension=buffer.readByte();
+						if (extension > 0)
+							pi.objectType=extension;
+						else
+						pi.objectType=9;
+						pi.rawData=buffer.readBuffer();
+						UIObjectFactory.resolvePackageItemExtension(pi);
 						break ;
 					}
 				case 4:
-					UIObjectFactory.resolvePackageItemExtension(pi);
-					break ;
+				case 2:
+				case 7:{
+						pi.file=resKey+pi.file;
+						break ;
+					}
 				}
 			this._items.push(pi);
 			this._itemsById[pi.id]=pi;
-			if(pi.name !=null)
+			if (pi.name !=null)
 				this._itemsByName[pi.name]=pi;
+			buffer.pos=nextPos;
 		}
-		cnt=this._items.length;
-		for(i=0;i < cnt;i++){
-			pi=this._items[i];
-			if(pi.type==6){
-				this.loadFont(pi);
-				fairygui.UIPackage._bitmapFonts[pi.bitmapFont.id]=pi.bitmapFont;
-			}
+		buffer.seek(indexTablePos,2);
+		cnt=buffer.getUint16();
+		for (i=0;i < cnt;i++){
+			nextPos=buffer.getUint16();
+			nextPos+=buffer.pos;
+			var itemId=buffer.readS();
+			pi=this._itemsById[buffer.readS()];
+			var sprite=new AtlasSprite();
+			sprite.atlas=pi;
+			sprite.rect.x=buffer.getInt32();
+			sprite.rect.y=buffer.getInt32();
+			sprite.rect.width=buffer.getInt32();
+			sprite.rect.height=buffer.getInt32();
+			sprite.rotated=buffer.readBool();
+			this._sprites[itemId]=sprite;
+			buffer.pos=nextPos;
 		}
-	}
-
-	__proto.decompressPackage=function(buf){
-		this._resData={};
-		var mark=new Uint8Array(buf.slice(0,2));
-		if(mark[0]==0x50 && mark[1]==0x4b){
-			buf.position=0;
-			this.decodeUncompressed(buf);
-		}
-		else{
-			var data;
-			var inflater=new Zlib.RawInflate(buf);data=inflater.decompress();;
-			var source=new Byte(data).readUTFBytes();
-			var curr=0;
-			var fn;
-			var size=NaN;
-			while(true){
-				var pos=source.indexOf("|",curr);
-				if(pos==-1)
-					break ;
-				fn=source.substring(curr,pos);
-				curr=pos+1;
-				pos=source.indexOf("|",curr);
-				size=parseInt(source.substring(curr,pos));
-				curr=pos+1;
-				this._resData[fn]=source.substr(curr,size);
-				curr+=size;
-			}
-		}
-	}
-
-	__proto.decodeUncompressed=function(buf){
-		var ba=new Byte(buf);
-		var pos=ba.length-22;
-		ba.pos=pos+10;
-		var entryCount=ba.getUint16();
-		ba.pos=pos+16;
-		pos=ba.getInt32();
-		for (var i=0;i < entryCount;i++){
-			ba.pos=pos+28;
-			var len=ba.getUint16();
-			var len2=ba.getUint16()+ba.getUint16();
-			ba.pos=pos+46;
-			var entryName=ba.getUTFBytes(len);
-			if (entryName[entryName.length-1] !='/' && entryName[entryName.length-1] !='\\'){
-				ba.pos=pos+20;
-				var size=ba.getInt32();
-				ba.pos=pos+42;
-				var offset=ba.getInt32()+30+len;
-				if (size > 0){
-					ba.pos=offset;
-					this._resData[entryName]=ba.readUTFBytes(size);
+		if (buffer.seek(indexTablePos,3)){
+			cnt=buffer.getUint16();
+			for (i=0;i < cnt;i++){
+				nextPos=buffer.getInt32();
+				nextPos+=buffer.pos;
+				pi=this._itemsById[buffer.readS()];
+				if (pi && pi.type==0){
+					pi.pixelHitTestData=new PixelHitTestData();
+					pi.pixelHitTestData.load(buffer);
 				}
+				buffer.pos=nextPos;
 			}
-			pos+=46+len+len2;
+		}
+	}
+
+	__proto.loadAllAssets=function(){
+		var cnt=this._items.length;
+		for(var i=0;i < cnt;i++){
+			var pi=this._items[i];
+			this.getItemAsset(pi);
+		}
+	}
+
+	__proto.unloadAssets=function(){
+		var cnt=this._items.length;
+		for(var i=0;i < cnt;i++){
+			var pi=this._items[i];
+			if(pi.type==4){
+				if(pi.texture!=null)
+					Laya.loader.clearTextureRes(pi.texture.url);
+			}
 		}
 	}
 
@@ -6534,13 +7926,14 @@ var UIPackage=(function(){
 		var cnt=this._items.length;
 		for(var i=0;i < cnt;i++){
 			var pi=this._items[i];
-			if(pi.type==7){
-				var texture=pi.texture;
-				if(texture !=null)
-					texture.destroy(true);
+			if(pi.type==4){
+				if(pi.texture!=null){
+					pi.texture.destroy(true);
+					pi.texture=null;
+				}
 			}
-			if(pi.bitmapFont !=null){
-				delete fairygui.UIPackage._bitmapFonts[pi.bitmapFont.id];
+			else if(pi.type==2){
+				SoundManager.destroySound(pi.file);
 			}
 		}
 	}
@@ -6555,7 +7948,7 @@ var UIPackage=(function(){
 
 	__proto.internalCreateObject=function(item,userClass){
 		var g;
-		if (item.type==4){
+		if (item.type==3){
 			if (userClass !=null)
 				g=new userClass();
 			else
@@ -6588,10 +7981,6 @@ var UIPackage=(function(){
 		return this.getItemAsset(pi);
 	}
 
-	__proto.getItemAssetURL=function(item){
-		return this._resKey+"@"+item.file;;
-	}
-
 	__proto.getItemAsset=function(item){
 		switch (item.type){
 			case 0:
@@ -6600,368 +7989,145 @@ var UIPackage=(function(){
 					var sprite=this._sprites[item.id];
 					if (sprite !=null)
 						item.texture=this.createSpriteTexture(sprite);
+					else
+					item.texture=null;
 				}
 				return item.texture;
-			case 7:
+			case 4:
 				if (!item.decoded){
 					item.decoded=true;
-					var fileName=(item.file !=null && item.file.length > 0)? item.file :(item.id+".png");
-					item.texture=AssetProxy.inst.getRes(this._resKey+"@"+fileName);
+					item.texture=AssetProxy.inst.getRes(item.file);
 					if(!UIConfig$1.textureLinearSampling)
 						item.texture.isLinearSampling=false;
 				}
 				return item.texture;
-			case 3:
-				if (!item.decoded){
-					item.decoded=true;
-					item.sound=AssetProxy.inst.getRes(this._resKey+"@"+item.file);
-				}
-				return item.sound;
-			case 6:
+			case 5:
 				if (!item.decoded){
 					item.decoded=true;
 					this.loadFont(item);
 				}
 				return item.bitmapFont;
-			case 2:
+			case 1:
 				if (!item.decoded){
 					item.decoded=true;
 					this.loadMovieClip(item);
 				}
 				return item.frames;
-			case 4:
-				if (!item.decoded){
-					item.decoded=true;
-					var str=this.getDesc(item.id+".xml");
-					var xml=Utils.parseXMLFromString(str);
-					item.componentData=xml.firstChild;
-					this.loadComponentChildren(item);
-					this.translateComponent(item);
-				}
-				return item.componentData;
+			case 3:
+				return item.rawData;
+			case 7:
+				if(item.file)
+					return AssetProxy.inst.getRes(item.file);
+				else
+				return null;
 			default :
-				return AssetProxy.inst.getRes(this._resKey+"@"+item.id);
+				return null;
 			}
-	}
-
-	__proto.getDesc=function(fn){
-		return this._resData[fn];
-	}
-
-	__proto.getPixelHitTestData=function(itemId){
-		return this._hitTestDatas[itemId];
-	}
-
-	__proto.loadComponentChildren=function(item){
-		var listNode=ToolSet.findChildNode(item.componentData,"displayList");
-		if (listNode !=null){
-			var col=listNode.childNodes;
-			var dcnt=col.length;
-			item.displayList=__newvec(dcnt);
-			var di;
-			for (var i=0;i < dcnt;i++){
-				var cxml=col[i];
-				var tagName=cxml.nodeName;
-				var src=cxml.getAttribute("src");
-				if (src){
-					var pkgId=cxml.getAttribute("pkg");
-					var pkg;
-					if (pkgId && pkgId !=item.owner.id)
-						pkg=fairygui.UIPackage.getById(pkgId);
-					else
-					pkg=item.owner;
-					var pi=pkg !=null ? pkg.getItemById(src):null;
-					if (pi !=null)
-						di=new DisplayListItem(pi,null);
-					else
-					di=new DisplayListItem(null,tagName);
-				}
-				else{
-					if (tagName=="text" && cxml.getAttribute("input")=="true")
-						di=new DisplayListItem(null,"inputtext");
-					else
-					di=new DisplayListItem(null,tagName);
-				}
-				di.desc=cxml;
-				item.displayList[i]=di;
-			}
-		}
-		else
-		item.displayList=__newvec(0,null);
-	}
-
-	__proto.translateComponent=function(item){
-		if(fairygui.UIPackage._stringsSource==null)
-			return;
-		var strings=fairygui.UIPackage._stringsSource[this.id+item.id];
-		if(strings==null)
-			return;
-		var length1=item.displayList.length;
-		var length2=NaN;
-		var value;
-		var cxml,dxml,exml;
-		var ename;
-		var elementId;
-		var items;
-		var i1=NaN,i2=NaN,j=NaN;
-		var str;
-		for (i1=0;i1 < length1;i1++){
-			cxml=item.displayList[i1].desc;
-			ename=cxml.nodeName;
-			elementId=cxml.getAttribute("id");
-			str=cxml.getAttribute("tooltips");
-			if(str){
-				value=strings[elementId+"-tips"];
-				if(value!=undefined)
-					cxml.setAttribute("tooltips",value);
-			}
-			dxml=ToolSet.findChildNode(cxml,"gearText");
-			if(dxml){
-				value=strings[elementId+"-texts"];
-				if(value!=undefined)
-					dxml.setAttribute("values",value);
-				value=strings[elementId+"-texts_def"];
-				if(value!=undefined)
-					dxml.setAttribute("default",value);
-			}
-			if(ename=="text" || ename=="richtext"){
-				value=strings[elementId];
-				if(value!=undefined)
-					cxml.setAttribute("text",value);
-				value=strings[elementId+"-prompt"];
-				if(value!=undefined)
-					cxml.setAttribute("prompt",value);
-			}
-			else if(ename=="list"){
-				items=cxml.childNodes;
-				length2=items.length;
-				j=0;
-				for (i2=0;i2 < length2;i2++){
-					exml=items[i2];
-					if(exml.nodeName!="item")
-						continue ;
-					value=strings[elementId+"-"+j];
-					if(value!=undefined)
-						exml.setAttribute("title",value);
-					j++;
-				}
-			}
-			else if(ename=="component"){
-				dxml=ToolSet.findChildNode(cxml,"Button");
-				if(dxml){
-					value=strings[elementId];
-					if(value!=undefined)
-						dxml.setAttribute("title",value);
-					value=strings[elementId+"-0"];
-					if(value!=undefined)
-						dxml.setAttribute("selectedTitle",value);
-					continue ;
-				}
-				dxml=ToolSet.findChildNode(cxml,"Label");
-				if(dxml){
-					value=strings[elementId];
-					if(value!=undefined)
-						dxml.setAttribute("title",value);
-					value=strings[elementId+"-prompt"];
-					if(value!=undefined)
-						dxml.setAttribute("prompt",value);
-					continue ;
-				}
-				dxml=ToolSet.findChildNode(cxml,"ComboBox");
-				if(dxml){
-					value=strings[elementId];
-					if(value!=undefined)
-						dxml.setAttribute("title",value);
-					items=dxml.childNodes;
-					length2=items.length;
-					j=0;
-					for (i2=0;i2 < length2;i2++){
-						exml=items[i2];
-						if(exml.nodeName!="item")
-							continue ;
-						value=strings[elementId+"-"+j];
-						if(value!=undefined)
-							exml.setAttribute("title",value);
-						j++;
-					}
-					continue ;
-				}
-			}
-		}
 	}
 
 	__proto.createSpriteTexture=function(sprite){
-		var atlasItem=this._itemsById[sprite.atlas];
-		if (atlasItem !=null){
-			var atlasTexture=(this.getItemAsset(atlasItem));
-			if(atlasTexture==null)
-				return null;
-			else
-			return this.createSubTexture(atlasTexture,sprite.rect);
-		}
-		else
-		return null;
-	}
-
-	__proto.createSubTexture=function(atlasTexture,clipRect){
-		var texture=Texture.createFromTexture(atlasTexture,
-		clipRect.x,clipRect.y,clipRect.width,clipRect.height);
-		return texture;
+		var atlasTexture=(this.getItemAsset(sprite.atlas));
+		return Texture.createFromTexture(atlasTexture,
+		sprite.rect.x,sprite.rect.y,sprite.rect.width,sprite.rect.height);
 	}
 
 	__proto.loadMovieClip=function(item){
-		var xml=Utils.parseXMLFromString(this.getDesc(item.id+".xml")).firstChild;
-		var str;
-		var arr;
-		str=xml.getAttribute("interval");
-		if (str)
-			item.interval=parseInt(str);
-		str=xml.getAttribute("swing");
-		if (str)
-			item.swing=str=="true";
-		str=xml.getAttribute("repeatDelay");
-		if (str)
-			item.repeatDelay=parseInt(str);
-		var frameCount=parseInt(xml.getAttribute("frameCount"));
-		item.frames=[];
-		var frameNodes=ToolSet.findChildNode(xml,"frames").childNodes;
-		var i=0;
-		var len=frameNodes.length;
-		for(var k=0;k < len;k++){
-			var frameNode=frameNodes[k];
-			if(frameNode.nodeName!="frame")
-				continue ;
-			var frame=new Frame();
-			str=frameNode.getAttribute("rect");
-			arr=str.split(",");
-			frame.rect=new Rectangle(parseInt(arr[0]),parseInt(arr[1]),parseInt(arr[2]),parseInt(arr[3]));
-			str=frameNode.getAttribute("addDelay");
-			if(str)
-				frame.addDelay=parseInt(str);
-			item.frames[i]=frame;
-			if (frame.rect.width==0)
-				continue ;
-			str=frameNode.getAttribute("sprite");
-			if (str)
-				str=item.id+"_"+str;
-			else
-			str=item.id+"_"+i;
-			var sprite=this._sprites[str];
-			if(sprite !=null)
+		var buffer=item.rawData;
+		buffer.seek(0,0);
+		item.interval=buffer.getInt32();
+		item.swing=buffer.readBool();
+		item.repeatDelay=buffer.getInt32();
+		buffer.seek(0,1);
+		var frameCount=buffer.getInt16();
+		item.frames=__newvec(frameCount);
+		var spriteId;
+		var frame;
+		var sprite;
+		for (var i=0;i < frameCount;i++){
+			var nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			frame=new Frame();
+			frame.rect.x=buffer.getInt32();
+			frame.rect.y=buffer.getInt32();
+			frame.rect.width=buffer.getInt32();
+			frame.rect.height=buffer.getInt32();
+			frame.addDelay=buffer.getInt32();
+			spriteId=buffer.readS();
+			if (spriteId !=null && (sprite=this._sprites[spriteId])!=null)
 				frame.texture=this.createSpriteTexture(sprite);
-			i++;
+			item.frames[i]=frame;
+			buffer.pos=nextPos;
 		}
 	}
 
 	__proto.loadFont=function(item){
 		var font=new BitmapFont$1();
-		font.id="ui://"+this.id+item.id;
-		var str=this.getDesc(item.id+".fnt");
-		var lines=str.split("\n");
-		var lineCount=lines.length;
-		var i=0;
-		var kv={};
-		var ttf=false;
-		var size=0;
-		var xadvance=0;
-		var resizable=false;
-		var atlasOffsetX=0,atlasOffsetY=0;
-		var charImg;
-		var mainTexture;
-		var lineHeight=0;
-		for (i=0;i < lineCount;i++){
-			str=lines[i];
-			if (str.length==0)
-				continue ;
-			str=ToolSet.trim(str);
-			var arr=str.split(" ");
-			for (var j=1;j < arr.length;j++){
-				var arr2=arr[j].split("=");
-				kv[arr2[0]]=arr2[1];
-			}
-			str=arr[0];
-			if (str=="char"){
-				var bg=new BMGlyph();
-				bg.x=isNaN(kv.x)? 0 :parseInt(kv.x);
-				bg.y=isNaN(kv.y)? 0 :parseInt(kv.y);
-				bg.offsetX=isNaN(kv.xoffset)? 0 :parseInt(kv.xoffset);
-				bg.offsetY=isNaN(kv.yoffset)? 0 :parseInt(kv.yoffset);
-				bg.width=isNaN(kv.width)? 0 :parseInt(kv.width);
-				bg.height=isNaN(kv.height)? 0 :parseInt(kv.height);
-				bg.advance=isNaN(kv.xadvance)? 0 :parseInt(kv.xadvance);
-				if (kv.chnl !=undefined){
-					bg.channel=parseInt(kv.chnl);
-					if (bg.channel==15)
-						bg.channel=4;
-					else if (bg.channel==1)
-					bg.channel=3;
-					else if (bg.channel==2)
-					bg.channel=2;
-					else
-					bg.channel=1;
-				}
-				if (!ttf){
-					if (kv.img){
-						charImg=this._itemsById[kv.img];
-						if (charImg !=null){
-							charImg.load();
-							bg.width=charImg.width;
-							bg.height=charImg.height;
-							bg.texture=charImg.texture;
-						}
-					}
-				}
-				else if (mainTexture !=null){
-					bg.texture=this.createSubTexture(mainTexture,new Rectangle(bg.x+atlasOffsetX,bg.y+atlasOffsetY,bg.width,bg.height));
-				}
-				if (ttf)
-					bg.lineHeight=lineHeight;
-				else {
-					if(bg.advance==0){
-						if(xadvance==0)
-							bg.advance=bg.offsetX+bg.width;
-						else
-						bg.advance=xadvance;
-					}
-					bg.lineHeight=bg.offsetY < 0 ? bg.height :(bg.offsetY+bg.height);
-					if(size>0 && bg.lineHeight<size)
-						bg.lineHeight=size;
-				}
-				font.glyphs[String.fromCharCode(kv.id)]=bg;
-			}
-			else if (str=="info"){
-				ttf=kv.face !=null;
-				if(!isNaN(kv.size))
-					size=parseInt(kv.size);
-				resizable=kv.resizable=="true";
-				if (ttf){
-					var sprite=this._sprites[item.id];
-					if (sprite !=null){
-						atlasOffsetX=sprite.rect.x;
-						atlasOffsetY=sprite.rect.y;
-						var atlasItem=this._itemsById[sprite.atlas];
-						if(atlasItem !=null)
-							mainTexture=(this.getItemAsset(atlasItem));
-					}
-				}
-			}
-			else if (str=="common"){
-				if(!isNaN(kv.lineHeight))
-					lineHeight=parseInt(kv.lineHeight);
-				if(size==0)
-					size=lineHeight;
-				else if(lineHeight==0)
-				lineHeight=size;
-				if(!isNaN(kv.xadvance))
-					xadvance=parseInt(kv.xadvance);
-			}
-		}
-		if (size==0 && bg)
-			size=bg.height;
-		font.ttf=ttf;
-		font.size=size;
-		font.resizable=resizable;
 		item.bitmapFont=font;
+		var buffer=item.rawData;
+		buffer.seek(0,0);
+		font.ttf=buffer.readBool();
+		buffer.readBool();
+		font.resizable=buffer.readBool();
+		buffer.readBool();
+		font.size=buffer.getInt32();
+		var xadvance=buffer.getInt32();
+		var lineHeight=buffer.getInt32();
+		var mainTexture=null;
+		var mainSprite=this._sprites[item.id];
+		if (mainSprite!=null)
+			mainTexture=(this.getItemAsset(mainSprite.atlas));
+		buffer.seek(0,1);
+		var bg=null;
+		var cnt=buffer.getInt32();
+		for (var i=0;i < cnt;i++){
+			var nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			bg=new BMGlyph();
+			var ch=buffer.readChar();
+			font.glyphs[ch]=bg;
+			var img=buffer.readS();
+			var bx=buffer.getInt32();
+			var by=buffer.getInt32();
+			bg.offsetX=buffer.getInt32();
+			bg.offsetY=buffer.getInt32();
+			bg.width=buffer.getInt32();
+			bg.height=buffer.getInt32();
+			bg.advance=buffer.getInt32();
+			bg.channel=buffer.readByte();
+			if (bg.channel==1)
+				bg.channel=3;
+			else if (bg.channel==2)
+			bg.channel=2;
+			else if (bg.channel==3)
+			bg.channel=1;
+			if (!font.ttf){
+				var charImg=this._itemsById[img];
+				if (charImg){
+					this.getItemAsset(charImg);
+					bg.width=charImg.width;
+					bg.height=charImg.height;
+					bg.texture=charImg.texture;
+				}
+			}
+			else{
+				bg.texture=Texture.createFromTexture(mainTexture,
+				bx+mainSprite.rect.x,by+mainSprite.rect.y,bg.width,bg.height);
+			}
+			if (font.ttf)
+				bg.lineHeight=lineHeight;
+			else{
+				if (bg.advance==0){
+					if (xadvance==0)
+						bg.advance=bg.offsetX+bg.width;
+					else
+					bg.advance=xadvance;
+				}
+				bg.lineHeight=bg.offsetY < 0 ? bg.height :(bg.offsetY+bg.height);
+				if (bg.lineHeight < font.size)
+					bg.lineHeight=font.size;
+			}
+			buffer.pos=nextPos;
+		}
 	}
 
 	__getset(0,__proto,'id',function(){
@@ -6991,8 +8157,14 @@ var UIPackage=(function(){
 	}
 
 	UIPackage.addPackage=function(resKey,descData){
+		if(!descData){
+			descData=AssetProxy.inst.getRes(resKey+"."+UIConfig$1.packageFileExtension);
+			if(!descData || descData.length==0)
+				throw new Error("package resource not ready: "+resKey);
+		};
+		var buffer=new ByteBuffer(descData);
 		var pkg=new UIPackage();
-		pkg.create(resKey,descData);
+		pkg.loadPackage(buffer,resKey);
 		fairygui.UIPackage._packageInstById[pkg.id]=pkg;
 		fairygui.UIPackage._packageInstByName[pkg.name]=pkg;
 		pkg.customId=resKey;
@@ -7064,6 +8236,13 @@ var UIPackage=(function(){
 		return null;
 	}
 
+	UIPackage.getItemAssetByURL=function(url){
+		var item=UIPackage.getItemByURL(url);
+		if (item==null)
+			return null;
+		return item.owner.getItemAsset(item);
+	}
+
 	UIPackage.normalizeURL=function(url){
 		if(url==null)
 			return null;
@@ -7078,45 +8257,13 @@ var UIPackage=(function(){
 		return UIPackage.getItemURL(pkgName,srcName);
 	}
 
-	UIPackage.getBitmapFontByURL=function(url){
-		return fairygui.UIPackage._bitmapFonts[url];
-	}
-
 	UIPackage.setStringsSource=function(source){
-		fairygui.UIPackage._stringsSource={};
-		var xml=Utils.parseXMLFromString(source);
-		var resNode=ToolSet.findChildNode(xml,"resources");
-		var nodes=resNode.childNodes;
-		var length1=nodes.length;
-		for (var i1=0;i1 < length1;i1++){
-			var cxml=nodes[i1];
-			if (cxml.nodeName=="string"){
-				var key=cxml.getAttribute("name");
-				var text=cxml.textContent;
-				var i=key.indexOf("-");
-				if(i==-1)
-					continue ;
-				var key2=key.substr(0,i);
-				var key3=key.substr(i+1);
-				var col=fairygui.UIPackage._stringsSource[key2];
-				if(!col){
-					col={};
-					fairygui.UIPackage._stringsSource[key2]=col;
-				}
-				col[key3]=text;
-			}
-		}
+		TranslationHelper.loadFromXML(source);
 	}
 
 	UIPackage._constructing=0;
 	UIPackage._packageInstById={};
 	UIPackage._packageInstByName={};
-	UIPackage._bitmapFonts={};
-	UIPackage._stringsSource=null;
-	UIPackage.sep0=",";
-	UIPackage.sep1="\n";
-	UIPackage.sep2=" ";
-	UIPackage.sep3="=";
 	UIPackage.__init$=function(){
 		//class AtlasSprite
 		AtlasSprite=(function(){
@@ -7281,20 +8428,6 @@ var ToolSet=(function(){
 		return null;
 	}
 
-	ToolSet.findChildNode=function(xml,name){
-		var col=xml.childNodes;
-		var length1=col.length;
-		if (length1>0){
-			for (var i1=0;i1 < length1;i1++){
-				var cxml=col[i1];
-				if (cxml.nodeName==name){
-					return cxml;
-				}
-			}
-		}
-		return null;
-	}
-
 	ToolSet.encodeHTML=function(str){
 		if (!str)
 			return "";
@@ -7308,13 +8441,6 @@ var ToolSet=(function(){
 
 	ToolSet.removeUBB=function(text){
 		return fairygui.utils.ToolSet.defaultUBBParser.parse(text,true);
-	}
-
-	ToolSet.parseEaseType=function(value){
-		var ret=ToolSet.EaseMap[value];
-		if (!ret)
-			ret=Ease.quartOut;
-		return ret;
 	}
 
 	ToolSet.clamp=function(value,min,max){
@@ -7333,67 +8459,12 @@ var ToolSet=(function(){
 		return value;
 	}
 
-	ToolSet.base64Decode=function(bstr){
-		var ba=new Byte();
-		var code=0;
-		var len=bstr.length;
-		for (var i=0;i < len;i+=4){
-			code=(ToolSet.BASE64_CHARS.indexOf(bstr.charAt(i))& 0x3F)<< 18;
-			code+=(ToolSet.BASE64_CHARS.indexOf(bstr.charAt(i+1))& 0x3F)<< 12;
-			code+=(ToolSet.BASE64_CHARS.indexOf(bstr.charAt(i+2))& 0x3F)<< 6;
-			code+=(ToolSet.BASE64_CHARS.indexOf(bstr.charAt(i+3))& 0x3F);
-			ba.writeByte((code >> 16)& 0xFF);
-			ba.writeByte((code >> 8)& 0xFF);
-			ba.writeByte(code & 0xFF);
-		}
-		if(len>0 && bstr.charAt(len-1)=="=")
-			ba.length-=1;
-		if(len>1 && bstr.charAt(len-2)=="=")
-			ba.length-=1;
-		ba.pos=0;
-		return ba;
-	}
-
 	ToolSet.lerp=function(start,end,percent){
 		return (start+percent*(end-start));
 	}
 
-	ToolSet.BASE64_CHARS="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
 	__static(ToolSet,
-	['defaultUBBParser',function(){return this.defaultUBBParser=new UBBParser();},'EaseMap',function(){return this.EaseMap={
-			"Linear":Ease.linearNone,
-			"Elastic.In":Ease.elasticIn,
-			"Elastic.Out":Ease.elasticOut,
-			"Elastic.InOut":Ease.elasticInOut,
-			"Quad.In":Ease.quadIn,
-			"Quad.Out":Ease.quadOut,
-			"Quad.InOut":Ease.quadInOut,
-			"Cube.In":Ease.cubicIn,
-			"Cube.Out":Ease.cubicOut,
-			"Cube.InOut":Ease.cubicInOut,
-			"Quart.In":Ease.quartIn,
-			"Quart.Out":Ease.quartOut,
-			"Quart.InOut":Ease.quartInOut,
-			"Quint.In":Ease.quintIn,
-			"Quint.Out":Ease.quintOut,
-			"Quint.InOut":Ease.quintInOut,
-			"Sine.In":Ease.sineIn,
-			"Sine.Out":Ease.sineOut,
-			"Sine.InOut":Ease.sineInOut,
-			"Bounce.In":Ease.bounceIn,
-			"Bounce.Out":Ease.bounceOut,
-			"Bounce.InOut":Ease.bounceInOut,
-			"Circ.In":Ease.circIn,
-			"Circ.Out":Ease.circOut,
-			"Circ.InOut":Ease.circInOut,
-			"Expo.In":Ease.quartIn,
-			"Expo.Out":Ease.quartOut,
-			"Expo.InOut":Ease.quartInOut,
-			"Back.In":Ease.backIn,
-			"Back.Out":Ease.backOut,
-			"Back.InOut":Ease.backInOut
-	};}
-
+	['defaultUBBParser',function(){return this.defaultUBBParser=new UBBParser();}
 	]);
 	return ToolSet;
 })()
@@ -7490,57 +8561,75 @@ var UBBParser=(function(){
 
 	__proto.getTagText=function(remove){
 		(remove===void 0)&& (remove=false);
-		var pos=this._text.indexOf("[",this._readPos);
-		if (pos==-1)
+		var pos1=this._readPos;
+		var pos2=0;
+		var result="";
+		while ((pos2=this._text.indexOf("[",pos1))!=-1){
+			if (this._text.charCodeAt(pos2-1)==92){
+				result+=this._text.substring(pos1,pos2-1);
+				result+="[";
+				pos1=pos2+1;
+			}
+			else{
+				result+=this._text.substring(pos1,pos2);
+				break ;
+			}
+		}
+		if (pos2==-1)
 			return null;
-		var ret=this._text.substring(this._readPos,pos);
 		if (remove)
-			this._readPos=pos;
-		return ret;
+			this._readPos=pos2;
+		return result;
 	}
 
 	__proto.parse=function(text,remove){
 		(remove===void 0)&& (remove=false);
 		this._text=text;
-		var pos1=0,pos2=NaN,pos3=0;
+		var pos1=0,pos2=0,pos3=0;
 		var end=false;
 		var tag,attr;
 		var repl;
 		var func;
-		while ((pos2=this._text.indexOf("[",pos1))!=-1){
+		var result="";
+		while((pos2=this._text.indexOf("[",pos1))!=-1){
+			if (pos2 > 0 && this._text.charCodeAt(pos2-1)==92){
+				result+=this._text.substring(pos1,pos2-1);
+				result+="[";
+				pos1=pos2+1;
+				continue ;
+			}
+			result+=this._text.substring(pos1,pos2);
 			pos1=pos2;
 			pos2=this._text.indexOf("]",pos1);
-			if (pos2==-1)
+			if(pos2==-1)
 				break ;
 			end=this._text.charAt(pos1+1)=='/';
-			tag=this._text.substring(end ? pos1+2 :pos1+1,pos2);
-			pos2++;
-			this._readPos=pos2;
+			tag=this._text.substring(end?pos1+2:pos1+1,pos2);
+			this._readPos=pos2+1;
 			attr=null;
 			repl=null;
 			pos3=tag.indexOf("=");
-			if (pos3 !=-1){
+			if(pos3!=-1){
 				attr=tag.substring(pos3+1);
 				tag=tag.substring(0,pos3);
 			}
 			tag=tag.toLowerCase();
 			func=this._handlers[tag];
-			if (func !=null){
+			if(func!=null){
 				if(!remove){
 					repl=func.call(this,tag,end,attr);
-					if (repl==null)
-						repl="";
+					if(repl!=null)
+						result+=repl;
 				}
-				else
-				repl="";
 			}
-			else {
-				pos1=pos2;
-				continue ;
-			}
-			this._text=this._text.substring(0,pos1)+repl+this._text.substring(this._readPos);
+			else
+			result+=this._text.substring(pos1,this._readPos);
+			pos1=this._readPos;
 		}
-		return this._text;
+		if (pos1 < this._text.length)
+			result+=this._text.substr(pos1);
+		this._text=null;
+		return result;
 	}
 
 	__static(UBBParser,
@@ -7688,14 +8777,14 @@ var ColorMatrix=(function(_super){
 //class fairygui.Controller extends laya.events.EventDispatcher
 var Controller=(function(_super){
 	function Controller(){
-		this._name=null;
 		this._selectedIndex=0;
 		this._previousIndex=0;
 		this._pageIds=null;
 		this._pageNames=null;
 		this._actions=null;
-		this._parent=null;
-		this._autoRadioGroupDepth=false;
+		this.name=null;
+		this.parent=null;
+		this.autoRadioGroupDepth=false;
 		this.changing=false;
 		Controller.__super.call(this);
 		this._pageIds=[];
@@ -7719,7 +8808,7 @@ var Controller=(function(_super){
 			this.changing=true;
 			this._previousIndex=this._selectedIndex;
 			this._selectedIndex=value;
-			this._parent.applyController(this);
+			this.parent.applyController(this);
 			this.changing=false;
 		}
 	}
@@ -7763,7 +8852,7 @@ var Controller=(function(_super){
 			if (this._selectedIndex >=this._pageIds.length)
 				this.selectedIndex=this._selectedIndex-1;
 			else
-			this._parent.applyController(this);
+			this.parent.applyController(this);
 		}
 	}
 
@@ -7774,7 +8863,7 @@ var Controller=(function(_super){
 		if (this._selectedIndex >=this._pageIds.length)
 			this.selectedIndex=this._selectedIndex-1;
 		else
-		this._parent.applyController(this);
+		this.parent.applyController(this);
 	}
 
 	__proto.clearPages=function(){
@@ -7783,7 +8872,7 @@ var Controller=(function(_super){
 		if (this._selectedIndex !=-1)
 			this.selectedIndex=-1;
 		else
-		this._parent.applyController(this);
+		this.parent.applyController(this);
 	}
 
 	__proto.hasPage=function(aName){
@@ -7824,88 +8913,38 @@ var Controller=(function(_super){
 		}
 	}
 
-	__proto.setup=function(xml){
-		this._name=xml.getAttribute("name");
-		this._autoRadioGroupDepth=xml.getAttribute("autoRadioGroupDepth")=="true";
+	__proto.setup=function(buffer){
+		var beginPos=buffer.pos;
+		buffer.seek(beginPos,0);
+		this.name=buffer.readS();
+		this.autoRadioGroupDepth=buffer.readBool();
+		buffer.seek(beginPos,1);
 		var i=0;
-		var k=0;
-		var str=xml.getAttribute("pages");
-		if (str){
-			var arr=str.split(",");
-			var cnt=arr.length;
-			for (i=0;i < cnt;i+=2){
-				this._pageIds.push(arr[i]);
-				this._pageNames.push(arr[i+1]);
-			}
-		};
-		var col=xml.childNodes;
-		var length1=col.length;
-		if(length1>0){
-			if(!this._actions)
+		var nextPos=0;
+		var cnt=buffer.getInt16();
+		for (i=0;i < cnt;i++){
+			this._pageIds.push(buffer.readS());
+			this._pageNames.push(buffer.readS());
+		}
+		buffer.seek(beginPos,2);
+		cnt=buffer.getInt16();
+		if (cnt > 0){
+			if (this._actions==null)
 				this._actions=[];
-			for(var i1=0;i1 < length1;i1++){
-				var cxml=col[i1];
-				var action=ControllerAction.createAction(cxml.getAttribute("type"));
-				action.setup(cxml);
+			for (i=0;i < cnt;i++){
+				nextPos=buffer.getInt16();
+				nextPos+=buffer.pos;
+				var action=ControllerAction.createAction(buffer.readByte());
+				action.setup(buffer);
 				this._actions.push(action);
+				buffer.pos=nextPos;
 			}
 		}
-		str=xml.getAttribute("transitions");
-		if(str){
-			if(!this._actions)
-				this._actions=[];
-			arr=str.split(",");
-			cnt=arr.length;
-			var ii=0;
-			for(i=0;i < cnt;i++){
-				str=arr[i];
-				if(!str)
-					continue ;
-				var taction=new PlayTransitionAction();
-				k=str.indexOf("=");
-				taction.transitionName=str.substr(k+1);
-				str=str.substring(0,k);
-				k=str.indexOf("-");
-				ii=parseInt(str.substring(k+1));
-				if(ii<this._pageIds.length)
-					taction.toPage=[this._pageIds[ii]];
-				str=str.substring(0,k);
-				if(str !="*"){
-					ii=parseInt(str);
-					if(ii<this._pageIds.length)
-						taction.fromPage=[this._pageIds[ii]];
-				}
-				taction.stopOnExit=true;
-				this._actions.push(taction);
-			}
-		}
-		if (this._parent && this._pageIds.length > 0)
+		if (this.parent !=null && this._pageIds.length > 0)
 			this._selectedIndex=0;
 		else
 		this._selectedIndex=-1;
 	}
-
-	__getset(0,__proto,'oppositePageId',null,function(val){
-		var i=this._pageIds.indexOf(val);
-		if(i > 0)
-			this.selectedIndex=0;
-		else if(this._pageIds.length > 1)
-		this.selectedIndex=1;
-	});
-
-	__getset(0,__proto,'name',function(){
-		return this._name;
-		},function(value){
-		this._name=value;
-	});
-
-	__getset(0,__proto,'pageCount',function(){
-		return this._pageIds.length;
-	});
-
-	__getset(0,__proto,'parent',function(){
-		return this._parent;
-	});
 
 	__getset(0,__proto,'selectedIndex',function(){
 		return this._selectedIndex;
@@ -7916,7 +8955,7 @@ var Controller=(function(_super){
 			this.changing=true;
 			this._previousIndex=this._selectedIndex;
 			this._selectedIndex=value;
-			this._parent.applyController(this);
+			this.parent.applyController(this);
 			this.event("fui_state_changed");
 			this.changing=false;
 		}
@@ -7945,6 +8984,10 @@ var Controller=(function(_super){
 		return this._pageNames[this._previousIndex];
 	});
 
+	__getset(0,__proto,'pageCount',function(){
+		return this._pageIds.length;
+	});
+
 	__getset(0,__proto,'selectedPageId',function(){
 		if (this._selectedIndex==-1)
 			return null;
@@ -7962,9 +9005,171 @@ var Controller=(function(_super){
 		return this._pageIds[this._previousIndex];
 	});
 
+	__getset(0,__proto,'oppositePageId',null,function(val){
+		var i=this._pageIds.indexOf(val);
+		if(i > 0)
+			this.selectedIndex=0;
+		else if(this._pageIds.length > 1)
+		this.selectedIndex=1;
+	});
+
 	Controller._nextPageId=0;
 	return Controller;
 })(EventDispatcher)
+
+
+//class fairygui.utils.ByteBuffer extends laya.utils.Byte
+var ByteBuffer=(function(_super){
+	function ByteBuffer(data,offset,length){
+		this.stringTable=null;
+		this.version=0;
+		(offset===void 0)&& (offset=0);
+		(length===void 0)&& (length=-1);
+		if(length==-1)
+			length=data.byteLength-offset;
+		if(offset==0 && length==data.byteLength)
+			ByteBuffer.__super.call(this,data);
+		else{
+			this._u8d_=new Uint8Array(data,offset,length);
+			this._d_=new DataView(this._u8d_.buffer,offset,length);
+			this._length=length;
+		}
+		this.endian="bigEndian";
+	}
+
+	__class(ByteBuffer,'fairygui.utils.ByteBuffer',_super);
+	var __proto=ByteBuffer.prototype;
+	__proto.skip=function(count){
+		this.pos+=count;
+	}
+
+	__proto.readBool=function(){
+		return this.getUint8()==1;
+	}
+
+	__proto.readS=function(){
+		var index=this.getUint16();
+		if (index==65534)
+			return null;
+		else if (index==65533)
+		return ""
+		else
+		return this.stringTable[index];
+	}
+
+	__proto.writeS=function(value){
+		var index=this.getUint16();
+		if (index !=65534 && index !=65533)
+			this.stringTable[index]=value;
+	}
+
+	__proto.readColor=function(hasAlpha){
+		(hasAlpha===void 0)&& (hasAlpha=false);
+		var r=this.getUint8();
+		var g=this.getUint8();
+		var b=this.getUint8();
+		var a=this.getUint8();
+		return (hasAlpha?(a<<24):0)+(r<<16)+(g<<8)+b;
+	}
+
+	__proto.readColorS=function(hasAlpha){
+		(hasAlpha===void 0)&& (hasAlpha=false);
+		var r=this.getUint8();
+		var g=this.getUint8();
+		var b=this.getUint8();
+		var a=this.getUint8();
+		if(hasAlpha && a!=255)
+			return "rgba("+r+","+g+","+b+","+(a/255)+")";
+		else{
+			var sr=r.toString(16);
+			var sg=g.toString(16);
+			var sb=b.toString(16);
+			if (sr.length==1)
+				sr="0"+sr;
+			if (sg.length==1)
+				sg="0"+sg;
+			if (sb.length==1)
+				sb="0"+sb;
+			return "#"+sr+sg+sb;
+		}
+	}
+
+	__proto.readChar=function(){
+		var i=this.getUint16();
+		return String.fromCharCode(i);
+	}
+
+	__proto.readBuffer=function(){
+		var count=this.getUint32();
+		var ba=new ByteBuffer(this.buffer,this._pos_,count);
+		ba.stringTable=this.stringTable;
+		ba.version=this.version;
+		return ba;
+	}
+
+	__proto.seek=function(indexTablePos,blockIndex){
+		var tmp=this._pos_;
+		this.pos=indexTablePos;
+		var segCount=this.getUint8();
+		if (blockIndex < segCount){
+			var useShort=this.getUint8()==1;
+			var newPos=0;
+			if (useShort){
+				this.pos+=2 *blockIndex;
+				newPos=this.getUint16();
+			}
+			else{
+				this.pos+=4 *blockIndex;
+				newPos=this.getUint32();
+			}
+			if (newPos > 0){
+				this.pos=indexTablePos+newPos;
+				return true;
+			}
+			else{
+				this.pos=tmp;
+				return false;
+			}
+		}
+		else{
+			this.pos=tmp;
+			return false;
+		}
+	}
+
+	return ByteBuffer;
+})(Byte)
+
+
+//class fairygui.utils.ChildHitArea extends laya.utils.HitArea
+var ChildHitArea=(function(_super){
+	function ChildHitArea(child,reversed){
+		this._child=null;
+		this._reversed=false;
+		ChildHitArea.__super.call(this);
+		this._child=child;
+		this._reversed=reversed;
+		if(this._reversed)
+			this.unHit=child.hitArea.hit;
+		else
+		this.hit=child.hitArea.hit;
+	}
+
+	__class(ChildHitArea,'fairygui.utils.ChildHitArea',_super);
+	var __proto=ChildHitArea.prototype;
+	__proto.isHit=function(x,y){
+		var tPos;
+		tPos=Point.TEMP;
+		tPos.setTo(0,0);
+		tPos=this._child.toParentPoint(tPos);
+		if (this._reversed)
+			return !HitArea.isHitGraphic(x-tPos.x,y-tPos.y,this.unHit);
+		else
+		return HitArea.isHitGraphic(x-tPos.x,y-tPos.y,this.hit);
+	}
+
+	return ChildHitArea;
+})(HitArea)
 
 
 //class fairygui.utils.PixelHitTest extends laya.utils.HitArea
@@ -8031,11 +9236,11 @@ var ChangePageAction=(function(_super){
 		}
 	}
 
-	__proto.setup=function(xml){
-		_super.prototype.setup.call(this,xml);
-		this.objectId=xml.getAttribute("objectId");
-		this.controllerName=xml.getAttribute("controller");
-		this.targetPage=xml.getAttribute("targetPage");
+	__proto.setup=function(buffer){
+		_super.prototype.setup.call(this,buffer);
+		this.objectId=buffer.readS();
+		this.controllerName=buffer.readS();
+		this.targetPage=buffer.readS();
 	}
 
 	return ChangePageAction;
@@ -8046,7 +9251,7 @@ var ChangePageAction=(function(_super){
 var PlayTransitionAction=(function(_super){
 	function PlayTransitionAction(){
 		this.transitionName=null;
-		this.repeat=1;
+		this.playTimes=1;
 		this.delay=0;
 		this.stopOnExit=false;
 		this._currentTransition=null;
@@ -8059,9 +9264,9 @@ var PlayTransitionAction=(function(_super){
 		var trans=controller.parent.getTransition(this.transitionName);
 		if(trans){
 			if(this._currentTransition && this._currentTransition.playing)
-				trans.changeRepeat(this.repeat);
+				trans.changePlayTimes(this.playTimes);
 			else
-			trans.play(null,this.repeat,this.delay);
+			trans.play(null,this.playTimes,this.delay);
 			this._currentTransition=trans;
 		}
 	}
@@ -8073,17 +9278,12 @@ var PlayTransitionAction=(function(_super){
 		}
 	}
 
-	__proto.setup=function(xml){
-		_super.prototype.setup.call(this,xml);
-		this.transitionName=xml.getAttribute("transition");
-		var str;
-		str=xml.getAttribute("repeat");
-		if(str)
-			this.repeat=parseInt(str);
-		str=xml.getAttribute("delay");
-		if(str)
-			this.delay=parseFloat(str);
-		this.stopOnExit=xml.getAttribute("stopOnExit")=="true";
+	__proto.setup=function(buffer){
+		_super.prototype.setup.call(this,buffer);
+		this.transitionName=buffer.readS();
+		this.playTimes=buffer.getInt32();
+		this.delay=buffer.getFloat32();
+		this.stopOnExit=buffer.readBool();
 	}
 
 	return PlayTransitionAction;
@@ -8094,65 +9294,109 @@ var PlayTransitionAction=(function(_super){
 var GTextField=(function(_super){
 	function GTextField(){
 		this._gearColor=null;
+		this._templateVars=null;
+		this._text=null;
 		GTextField.__super.call(this);
 		this._gearColor=new GearColor(this);
 	}
 
 	__class(GTextField,'fairygui.GTextField',_super);
 	var __proto=GTextField.prototype;
-	Laya.imps(__proto,{"fairygui.IColorGear":true})
+	Laya.imps(__proto,{"fairygui.gears.IColorGear":true})
+	__proto.parseTemplate=function(template){
+		var pos1=0,pos2=0,pos3=0;
+		var tag;
+		var value;
+		var result="";
+		while((pos2=template.indexOf("{",pos1))!=-1){
+			if (pos2 > 0 && template.charCodeAt(pos2-1)==92){
+				result+=template.substring(pos1,pos2-1);
+				result+="{";
+				pos1=pos2+1;
+				continue ;
+			}
+			result+=template.substring(pos1,pos2);
+			pos1=pos2;
+			pos2=template.indexOf("}",pos1);
+			if(pos2==-1)
+				break ;
+			if(pos2==pos1+1){
+				result+=template.substr(pos1,2);
+				pos1=pos2+1;
+				continue ;
+			}
+			tag=template.substring(pos1+1,pos2);
+			pos3=tag.indexOf("=");
+			if(pos3!=-1){
+				value=this._templateVars[tag.substring(0,pos3)];
+				if(value==null)
+					result+=tag.substring(pos3+1);
+				else
+				result+=value;
+			}
+			else{
+				value=this._templateVars[tag];
+				if(value!=null)
+					result+=value;
+			}
+			pos1=pos2+1;
+		}
+		if (pos1 < template.length)
+			result+=template.substr(pos1);
+		return result;
+	}
+
+	__proto.setVar=function(name,value){
+		if(!this._templateVars)
+			this._templateVars={};
+		this._templateVars[name]=value;
+		return this;
+	}
+
+	__proto.flushVars=function(){
+		this.text=this._text;
+	}
+
 	__proto.handleControllerChanged=function(c){
 		_super.prototype.handleControllerChanged.call(this,c);
 		if(this._gearColor.controller==c)
 			this._gearColor.apply();
 	}
 
-	__proto.setup_beforeAdd=function(xml){
-		_super.prototype.setup_beforeAdd.call(this,xml);
-		var str;
-		str=xml.getAttribute("font");
-		if (str)
-			this.font=str;
-		str=xml.getAttribute("fontSize");
-		if (str)
-			this.fontSize=parseInt(str);
-		str=xml.getAttribute("color");
-		if (str)
-			this.color=str;
-		str=xml.getAttribute("align");
-		if (str)
-			this.align=str;
-		str=xml.getAttribute("vAlign");
-		if (str)
-			this.valign=str;
-		str=xml.getAttribute("leading");
-		if (str)
-			this.leading=parseInt(str);
-		else
-		this.leading=3;
-		str=xml.getAttribute("letterSpacing");
-		if (str)
-			this.letterSpacing=parseInt(str);
-		this.ubbEnabled=xml.getAttribute("ubb")=="true";
-		this.italic=xml.getAttribute("italic")=="true";
-		this.bold=xml.getAttribute("bold")=="true";
-		this.underline=xml.getAttribute("underline")=="true";
-		this.singleLine=xml.getAttribute("singleLine")=="true";
-		str=xml.getAttribute("strokeColor");
-		if (str){
-			this.strokeColor=str;
-			str=xml.getAttribute("strokeSize");
-			if(str)
-				this.stroke=parseInt(str)+1;
-			else
-			this.stroke=2;
+	__proto.setup_beforeAdd=function(buffer,beginPos){
+		_super.prototype.setup_beforeAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,5);
+		var iv=0;
+		this.font=buffer.readS();
+		this.fontSize=buffer.getInt16();
+		this.color=buffer.readColorS();
+		iv=buffer.readByte();
+		this.align=iv==0?"left":(iv==1?"center":"right");
+		iv=buffer.readByte();
+		this.valign=iv==0?"top":(iv==1?"middle":"bottom");
+		this.leading=buffer.getInt16();
+		this.letterSpacing=buffer.getInt16();
+		this.ubbEnabled=buffer.readBool();
+		this.autoSize=buffer.readByte();
+		this.underline=buffer.readBool();
+		this.italic=buffer.readBool();
+		this.bold=buffer.readBool();
+		this.singleLine=buffer.readBool();
+		if (buffer.readBool()){
+			this.strokeColor=buffer.readColorS();
+			this.stroke=buffer.getFloat32()+1;
 		}
+		if (buffer.readBool())
+			buffer.skip(12);
+		if (buffer.readBool())
+			this._templateVars={};
 	}
 
-	__proto.setup_afterAdd=function(xml){
-		_super.prototype.setup_afterAdd.call(this,xml);
-		var str=xml.getAttribute("text");
-		if(str !=null && str.length > 0)
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		_super.prototype.setup_afterAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,6);
+		var str=buffer.readS();
+		if (str !=null)
 			this.text=str;
 	}
 
@@ -8164,6 +9408,15 @@ var GTextField=(function(_super){
 	__getset(0,__proto,'font',function(){
 		return null;
 		},function(value){
+	});
+
+	__getset(0,__proto,'templateVars',function(){
+		return this._templateVars;
+		},function(value){
+		if(this._templateVars==null && value==null)
+			return;
+		this._templateVars=value;
+		this.flushVars();
 	});
 
 	__getset(0,__proto,'leading',function(){
@@ -8226,12 +9479,19 @@ var GTextField=(function(_super){
 		},function(value){
 	});
 
-	__getset(0,__proto,'textWidth',function(){
+	/**
+	*@see AutoSizeType
+	*/
+	/**
+	*@see AutoSizeType
+	*/
+	__getset(0,__proto,'autoSize',function(){
 		return 0;
+		},function(value){
 	});
 
-	__getset(0,__proto,'gearColor',function(){
-		return this._gearColor;
+	__getset(0,__proto,'textWidth',function(){
+		return 0;
 	});
 
 	return GTextField;
@@ -8244,6 +9504,7 @@ var GComponent=(function(_super){
 		this._sortingChildCount=0;
 		this._opaque=false;
 		this._applyingController=null;
+		this._mask=null;
 		this._margin=null;
 		this._trackBounds=false;
 		this._boundsChanged=false;
@@ -8262,6 +9523,7 @@ var GComponent=(function(_super){
 		this._transitions=[];
 		this._margin=new Margin();
 		this._alignOffset=new Point();
+		this._opaque=false;
 	}
 
 	__class(GComponent,'fairygui.GComponent',_super);
@@ -8295,6 +9557,7 @@ var GComponent=(function(_super){
 			obj.dispose();
 		}
 		this._boundsChanged=false;
+		this._mask=null;
 		_super.prototype.dispose.call(this);
 	}
 
@@ -8546,7 +9809,7 @@ var GComponent=(function(_super){
 
 	__proto.addController=function(controller){
 		this._controllers.push(controller);
-		controller._parent=this;
+		controller.parent=this;
 		this.applyController(controller);
 	}
 
@@ -8568,7 +9831,7 @@ var GComponent=(function(_super){
 		var index=this._controllers.indexOf(c);
 		if(index==-1)
 			throw new Error("controller not exists");
-		c._parent=null;
+		c.parent=null;
 		this._controllers.splice(index,1);
 		var length=this._children.length;
 		for(var i=0;i < length;i++){
@@ -8746,6 +10009,31 @@ var GComponent=(function(_super){
 		return-1;
 	}
 
+	__proto.setMask=function(value,reversed){
+		if(this._mask && this._mask!=value){
+			if(this._mask.blendMode=="destination-out")
+				this._mask.blendMode=null;
+		}
+		this._mask=value;
+		if(!this._mask){
+			this._displayObject.mask=null;
+			if((this._displayObject.hitArea instanceof fairygui.utils.ChildHitArea ))
+				this._displayObject.hitArea=null;
+			return;
+		}
+		if(this._mask.hitArea){
+			this._displayObject.hitArea=new ChildHitArea(this._mask,reversed);
+			this._displayObject.mouseThrough=false;
+			this._displayObject.hitTestPrior=true;
+		}
+		if(reversed){
+			this._displayObject.mask=null;
+			this._mask.blendMode="destination-out";
+		}
+		else
+		this._displayObject.mask=this._mask;
+	}
+
 	__proto.updateHitArea=function(){
 		if((this._displayObject.hitArea instanceof fairygui.utils.PixelHitTest )){
 			var hitTest=(this._displayObject.hitArea);
@@ -8754,9 +10042,7 @@ var GComponent=(function(_super){
 			if(this.sourceHeight!=0)
 				hitTest.scaleY=this.height/this.sourceHeight;
 		}
-		else{
-			if(this._displayObject.hitArea==null)
-				this._displayObject.hitArea=new Rectangle();
+		else if((this._displayObject.hitArea instanceof laya.maths.Rectangle )){
 			this._displayObject.hitArea.setTo(0,0,this.width,this.height);
 		}
 	}
@@ -8772,13 +10058,13 @@ var GComponent=(function(_super){
 		this._displayObject.scrollRect=rect;
 	}
 
-	__proto.setupScroll=function(scrollBarMargin,scroll,scrollBarDisplay,flags,vtScrollBarRes,hzScrollBarRes,headerRes,footerRes){
+	__proto.setupScroll=function(buffer){
 		if (this._displayObject==this._container){
 			this._container=new Sprite();
 			this._displayObject.addChild(this._container);
 		}
-		this._scrollPane=new ScrollPane(this,scroll,scrollBarMargin,scrollBarDisplay,flags,
-		vtScrollBarRes,hzScrollBarRes,headerRes,footerRes);
+		this._scrollPane=new ScrollPane(this);
+		this._scrollPane.setup(buffer);
 	}
 
 	__proto.setupOverflow=function(overflow){
@@ -8982,153 +10268,152 @@ var GComponent=(function(_super){
 	}
 
 	__proto.constructFromResource2=function(objectPool,poolIndex){
-		var xml=this.packageItem.owner.getItemAsset(this.packageItem);
+		if (!this.packageItem.decoded){
+			this.packageItem.decoded=true;
+			TranslationHelper.translateComponent(this.packageItem);
+		};
+		var i=0;
+		var dataLen=0;
+		var curPos=0;
+		var nextPos=0;
+		var f1=NaN;
+		var f2=NaN;
+		var i1=0;
+		var i2=0;
+		var buffer=this.packageItem.rawData;
+		buffer.seek(0,0);
 		this._underConstruct=true;
-		var str;
-		var arr;
-		str=xml.getAttribute("size");
-		arr=str.split(",");
-		this.sourceWidth=parseInt(arr[0]);
-		this.sourceHeight=parseInt(arr[1]);
+		this.sourceWidth=buffer.getInt32();
+		this.sourceHeight=buffer.getInt32();
 		this.initWidth=this.sourceWidth;
 		this.initHeight=this.sourceHeight;
 		this.setSize(this.sourceWidth,this.sourceHeight);
-		str=xml.getAttribute("restrictSize");
-		if(str){
-			arr=str.split(",");
-			this.minWidth=parseInt(arr[0]);
-			this.maxWidth=parseInt(arr[1]);
-			this.minHeight=parseInt(arr[2]);
-			this.maxHeight=parseInt(arr[3]);
+		if (buffer.readBool()){
+			this.minWidth=buffer.getInt32();
+			this.maxWidth=buffer.getInt32();
+			this.minHeight=buffer.getInt32();
+			this.maxHeight=buffer.getInt32();
 		}
-		str=xml.getAttribute("pivot");
-		if(str){
-			arr=str.split(",");
-			str=xml.getAttribute("anchor");
-			this.internalSetPivot(parseFloat(arr[0]),parseFloat(arr[1]),str=="true");
+		if (buffer.readBool()){
+			f1=buffer.getFloat32();
+			f2=buffer.getFloat32();
+			this.internalSetPivot(f1,f2,buffer.readBool());
 		}
-		str=xml.getAttribute("opaque");
-		this.opaque=str !="false";
-		str=xml.getAttribute("hitTest");
-		if(str){
-			arr=str.split(",");
-			var hitTestData=this.packageItem.owner.getPixelHitTestData(arr[0]);
-			if (hitTestData !=null){
-				this._displayObject.hitArea=new PixelHitTest(hitTestData,parseInt(arr[1]),parseInt(arr[2]));
-				this._displayObject.mouseThrough=false;
-				this._displayObject.hitTestPrior=true;
-			}
+		if (buffer.readBool()){
+			this._margin.top=buffer.getInt32();
+			this._margin.bottom=buffer.getInt32();
+			this._margin.left=buffer.getInt32();
+			this._margin.right=buffer.getInt32();
 		};
-		var overflow=0;
-		str=xml.getAttribute("overflow");
-		if (str)
-			overflow=OverflowType.parse(str);
-		else
-		overflow=0;
-		str=xml.getAttribute("margin");
-		if(str)
-			this._margin.parse(str);
-		if(overflow==2){
-			var scroll=0;
-			str=xml.getAttribute("scroll");
-			if (str)
-				scroll=ScrollType.parse(str);
-			else
-			scroll=1;
-			var scrollBarDisplay=0;
-			str=xml.getAttribute("scrollBar");
-			if (str)
-				scrollBarDisplay=ScrollBarDisplayType.parse(str);
-			else
-			scrollBarDisplay=0;
-			var scrollBarFlags=NaN;
-			str=xml.getAttribute("scrollBarFlags");
-			if(str)
-				scrollBarFlags=parseInt(str);
-			else
-			scrollBarFlags=0;
-			var scrollBarMargin=new Margin();
-			str=xml.getAttribute("scrollBarMargin");
-			if(str)
-				scrollBarMargin.parse(str);
-			var vtScrollBarRes;
-			var hzScrollBarRes;
-			str=xml.getAttribute("scrollBarRes");
-			if(str){
-				arr=str.split(",");
-				vtScrollBarRes=arr[0];
-				hzScrollBarRes=arr[1];
-			};
-			var headerRes;
-			var footerRes;
-			str=xml.getAttribute('ptrRes');
-			if(str){
-				arr=str.split(",");
-				headerRes=arr[0];
-				footerRes=arr[1];
-			}
-			this.setupScroll(scrollBarMargin,scroll,scrollBarDisplay,scrollBarFlags,
-			vtScrollBarRes,hzScrollBarRes,headerRes,footerRes);
+		var overflow=buffer.readByte();
+		if (overflow==2){
+			var savedPos=buffer.pos;
+			buffer.seek(0,7);
+			this.setupScroll(buffer);
+			buffer.pos=savedPos;
 		}
 		else
 		this.setupOverflow(overflow);
+		if (buffer.readBool())
+			buffer.skip(8);
 		this._buildingDisplayList=true;
-		var col=xml.childNodes;
-		var length1=0;
-		if(col)
-			length1=col.length;
-		var i=0;
-		var controller;
-		for(i=0;i < length1;i++){
-			var cxml=col[i];
-			if(cxml.nodeName=="controller"){
-				controller=new Controller();
-				this._controllers.push(controller);
-				controller._parent=this;
-				controller.setup(cxml);
-			}
-		};
+		buffer.seek(0,1);
+		var controllerCount=buffer.getInt16();
+		for (i=0;i < controllerCount;i++){
+			nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			var controller=new Controller();
+			this._controllers.push(controller);
+			controller.parent=this;
+			controller.setup(buffer);
+			buffer.pos=nextPos;
+		}
+		buffer.seek(0,2);
 		var child;
-		var displayList=this.packageItem.displayList;
-		var childCount=displayList.length;
+		var childCount=buffer.getInt16();
 		for (i=0;i < childCount;i++){
-			var di=displayList[i];
-			if (objectPool !=null){
+			dataLen=buffer.getInt16();
+			curPos=buffer.pos;
+			if (objectPool !=null)
 				child=objectPool[poolIndex+i];
+			else{
+				buffer.seek(curPos,0);
+				var type=buffer.readByte();
+				var src=buffer.readS();
+				var pkgId=buffer.readS();
+				var pi=null;
+				if (src !=null){
+					var pkg;
+					if (pkgId !=null)
+						pkg=UIPackage.getById(pkgId);
+					else
+					pkg=this.packageItem.owner;
+					pi=pkg !=null ? pkg.getItemById(src):null;
+				}
+				if (pi !=null){
+					child=UIObjectFactory.newObject(pi);
+					child.packageItem=pi;
+					child.constructFromResource();
+				}
+				else
+				child=UIObjectFactory.newObject2(type);
 			}
-			else if (di.packageItem){
-				child=UIObjectFactory.newObject(di.packageItem);
-				child.packageItem=di.packageItem;
-				child.constructFromResource();
-			}
-			else
-			child=UIObjectFactory.newObject2(di.type);
 			child._underConstruct=true;
-			child.setup_beforeAdd(di.desc);
+			child.setup_beforeAdd(buffer,curPos);
 			child.parent=this;
 			this._children.push(child);
+			buffer.pos=curPos+dataLen;
 		}
-		this.relations.setup(xml);
-		for (i=0;i < childCount;i++)
-		this._children[i].relations.setup(displayList[i].desc);
+		buffer.seek(0,3);
+		this.relations.setup(buffer,true);
+		buffer.seek(0,2);
+		buffer.skip(2);
 		for (i=0;i < childCount;i++){
-			child=this._children[i];
-			child.setup_afterAdd(displayList[i].desc);
-			child._underConstruct=false;
+			nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			buffer.seek(buffer.pos,3);
+			this._children[i].relations.setup(buffer,false);
+			buffer.pos=nextPos;
 		}
-		str=xml.getAttribute("mask");
-		if(str)
-			this.mask=this.getChildById(str).displayObject;
-		var trans;
-		for(i=0;i < length1;i++){
-			cxml=col[i];
-			if(cxml.nodeName=="transition"){
-				trans=new Transition(this);
-				this._transitions.push(trans);
-				trans.setup(cxml);
+		buffer.seek(0,2);
+		buffer.skip(2);
+		for (i=0;i < childCount;i++){
+			nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			child=this._children[i];
+			child.setup_afterAdd(buffer,buffer.pos);
+			child._underConstruct=false;
+			buffer.pos=nextPos;
+		}
+		buffer.seek(0,4);
+		buffer.skip(2);
+		this.opaque=buffer.readBool();
+		var maskId=buffer.getInt16();
+		if (maskId !=-1){
+			this.setMask(this.getChildAt(maskId).displayObject,buffer.readBool());
+		};
+		var hitTestId=buffer.readS();
+		if (hitTestId !=null){
+			pi=this.packageItem.owner.getItemById(hitTestId);
+			if (pi !=null && pi.pixelHitTestData !=null){
+				i1=buffer.getInt32();
+				i2=buffer.getInt32();
+				this._displayObject.hitArea=new PixelHitTest(pi.pixelHitTestData,i1,i2);
+				this._displayObject.mouseThrough=false;
+				this._displayObject.hitTestPrior=true;
 			}
 		}
-		if(this._transitions.length>0){
+		buffer.seek(0,5);
+		var transitionCount=buffer.getInt16();
+		for (i=0;i < transitionCount;i++){
+			nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			var trans=new Transition(this);
+			trans.setup(buffer);
+			this._transitions.push(trans);
+			buffer.pos=nextPos;
+		}
+		if (this._transitions.length > 0){
 			this.displayObject.on("display",this,this.___added);
 			this.displayObject.on("undisplay",this,this.___removed);
 		}
@@ -9137,42 +10422,39 @@ var GComponent=(function(_super){
 		this._underConstruct=false;
 		this.buildNativeDisplayList();
 		this.setBoundsChangedFlag();
-		this.constructFromXML(xml);
+		if (this.packageItem.objectType !=9)
+			this.constructExtension(buffer);
+		this.constructFromXML(null);
 	}
 
+	__proto.constructExtension=function(buffer){}
 	__proto.constructFromXML=function(xml){}
-	__proto.setup_afterAdd=function(xml){
-		_super.prototype.setup_afterAdd.call(this,xml);
-		var str;
-		if(this.scrollPane){
-			str=xml.getAttribute("pageController");
-			if(str)
-				this.scrollPane.pageController=this.parent.getController(str);
-		}
-		str=xml.getAttribute("controller");
-		if(str){
-			var arr=str.split(",");
-			for(var i=0;i<arr.length;i+=2){
-				var cc=this.getController(arr[i]);
-				if(cc)
-					cc.selectedPageId=arr[i+1];
-			}
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		_super.prototype.setup_afterAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,4);
+		var pageController=buffer.getInt16();
+		if (pageController !=-1 && this._scrollPane !=null)
+			this._scrollPane.pageController=this._parent.getControllerAt(pageController);
+		var cnt=buffer.getInt16();
+		for (var i=0;i < cnt;i++){
+			var cc=this.getController(buffer.readS());
+			var pageId=buffer.readS();
+			if(cc)
+				cc.selectedPageId=pageId;
 		}
 	}
 
 	__proto.___added=function(){
 		var cnt=this._transitions.length;
 		for(var i=0;i < cnt;++i){
-			var trans=this._transitions[i];
-			if(trans.autoPlay)
-				trans.play(null,trans.autoPlayRepeat,trans.autoPlayDelay);
+			this._transitions[i].onOwnerAddedToStage();
 		}
 	}
 
 	__proto.___removed=function(){
 		var cnt=this._transitions.length;
 		for(var i=0;i < cnt;++i){
-			this._transitions[i].OnOwnerRemovedFromStage();
+			this._transitions[i].onOwnerRemovedFromStage();
 		}
 	}
 
@@ -9184,6 +10466,12 @@ var GComponent=(function(_super){
 		return this._container;
 	});
 
+	/**
+	*@see ChildrenRenderOrder
+	*/
+	/**
+	*@see ChildrenRenderOrder
+	*/
 	__getset(0,__proto,'childrenRenderOrder',function(){
 		return this._childrenRenderOrder;
 		},function(value){
@@ -9194,15 +10482,22 @@ var GComponent=(function(_super){
 	});
 
 	__getset(0,__proto,'opaque',function(){
-		return this._displayObject.hitArea!=null;
+		return this._opaque;
 		},function(value){
-		if (value){
-			this.updateHitArea();
-			this._displayObject.mouseThrough=false;
-		}
-		else{
-			this._displayObject.hitArea=null;
-			this._displayObject.mouseThrough=true;
+		if(this._opaque!=value){
+			this._opaque=value;
+			if (this._opaque){
+				if(this._displayObject.hitArea==null)
+					this._displayObject.hitArea=new Rectangle();
+				if((this._displayObject.hitArea instanceof laya.maths.Rectangle ))
+					this._displayObject.hitArea.setTo(0,0,this.width,this.height);
+				this._displayObject.mouseThrough=false;
+			}
+			else {
+				if((this._displayObject.hitArea instanceof laya.maths.Rectangle ))
+					this._displayObject.hitArea=null;
+				this._displayObject.mouseThrough=true;
+			}
 		}
 	});
 
@@ -9235,21 +10530,9 @@ var GComponent=(function(_super){
 	});
 
 	__getset(0,__proto,'mask',function(){
-		return this._displayObject.mask;
+		return this._mask;
 		},function(value){
-		this._displayObject.mask=value;
-	});
-
-	__getset(0,__proto,'viewWidth',function(){
-		if (this._scrollPane !=null)
-			return this._scrollPane.viewWidth;
-		else
-		return this.width-this._margin.left-this._margin.right;
-		},function(value){
-		if (this._scrollPane !=null)
-			this._scrollPane.viewWidth=value;
-		else
-		this.width=value+this._margin.left+this._margin.right;
+		this.setMask(value,false);
 	});
 
 	__getset(0,__proto,'viewHeight',function(){
@@ -9264,11 +10547,29 @@ var GComponent=(function(_super){
 		this.height=value+this._margin.top+this._margin.bottom;
 	});
 
+	__getset(0,__proto,'baseUserData',function(){
+		var buffer=this.packageItem.rawData;
+		buffer.seek(0,4);
+		return buffer.readS();
+	});
+
+	__getset(0,__proto,'viewWidth',function(){
+		if (this._scrollPane !=null)
+			return this._scrollPane.viewWidth;
+		else
+		return this.width-this._margin.left-this._margin.right;
+		},function(value){
+		if (this._scrollPane !=null)
+			this._scrollPane.viewWidth=value;
+		else
+		this.width=value+this._margin.left+this._margin.right;
+	});
+
 	return GComponent;
 })(GObject)
 
 
-//class fairygui.GearAnimation extends fairygui.GearBase
+//class fairygui.gears.GearAnimation extends fairygui.gears.GearBase
 var GearAnimation=(function(_super){
 	var GearAnimationValue;
 	function GearAnimation(owner){
@@ -9277,7 +10578,7 @@ var GearAnimation=(function(_super){
 		GearAnimation.__super.call(this,owner);
 	}
 
-	__class(GearAnimation,'fairygui.GearAnimation',_super);
+	__class(GearAnimation,'fairygui.gears.GearAnimation',_super);
 	var __proto=GearAnimation.prototype;
 	__proto.init=function(){
 		this._default=new GearAnimationValue((this._owner).playing,
@@ -9285,19 +10586,16 @@ var GearAnimation=(function(_super){
 		this._storage={};
 	}
 
-	__proto.addStatus=function(pageId,value){
-		if(value=="-" || value.length==0)
-			return;
+	__proto.addStatus=function(pageId,buffer){
 		var gv;
 		if (pageId==null)
 			gv=this._default;
 		else {
 			gv=new GearAnimationValue();
 			this._storage[pageId]=gv;
-		};
-		var arr=value.split(",");
-		gv.frame=parseInt(arr[0]);
-		gv.playing=arr[1]=="p";
+		}
+		gv.playing=buffer.readBool();
+		gv.frame=buffer.getInt32();
 	}
 
 	__proto.apply=function(){
@@ -9341,7 +10639,7 @@ var GearAnimation=(function(_super){
 })(GearBase)
 
 
-//class fairygui.GearColor extends fairygui.GearBase
+//class fairygui.gears.GearColor extends fairygui.gears.GearBase
 var GearColor=(function(_super){
 	var GearColorValue;
 	function GearColor(owner){
@@ -9350,7 +10648,7 @@ var GearColor=(function(_super){
 		GearColor.__super.call(this,owner);
 	}
 
-	__class(GearColor,'fairygui.GearColor',_super);
+	__class(GearColor,'fairygui.gears.GearColor',_super);
 	var __proto=GearColor.prototype;
 	__proto.init=function(){
 		if(this._owner["strokeColor"]!=undefined)
@@ -9360,26 +10658,16 @@ var GearColor=(function(_super){
 		this._storage={};
 	}
 
-	__proto.addStatus=function(pageId,value){
-		if(value=="-"|| value.length==0)
-			return;
-		var pos=value.indexOf(",");
-		var col1;
-		var col2;
-		if(pos==-1){
-			col1=value;
-			col2=null;
+	__proto.addStatus=function(pageId,buffer){
+		var gv;
+		if (pageId==null)
+			gv=this._default;
+		else {
+			gv=new GearColorValue();
+			this._storage[pageId]=gv;
 		}
-		else{
-			col1=value.substr(0,pos);
-			col2=value.substr(pos+1);
-		}
-		if(pageId==null){
-			this._default.color=col1;
-			this._default.strokeColor=col2;
-		}
-		else
-		this._storage[pageId]=new GearColorValue(col1,col2);
+		gv.color=buffer.readColorS();
+		gv.strokeColor=buffer.readColorS();
 	}
 
 	__proto.apply=function(){
@@ -9422,16 +10710,17 @@ var GearColor=(function(_super){
 })(GearBase)
 
 
-//class fairygui.GearDisplay extends fairygui.GearBase
+//class fairygui.gears.GearDisplay extends fairygui.gears.GearBase
 var GearDisplay=(function(_super){
 	function GearDisplay(owner){
 		this.pages=null;
 		this._visible=0;
+		this._displayLockToken=0;
 		GearDisplay.__super.call(this,owner);
 		this._displayLockToken=1;
 	}
 
-	__class(GearDisplay,'fairygui.GearDisplay',_super);
+	__class(GearDisplay,'fairygui.gears.GearDisplay',_super);
 	var __proto=GearDisplay.prototype;
 	__proto.init=function(){
 		this.pages=null;
@@ -9466,7 +10755,7 @@ var GearDisplay=(function(_super){
 })(GearBase)
 
 
-//class fairygui.GearIcon extends fairygui.GearBase
+//class fairygui.gears.GearIcon extends fairygui.gears.GearBase
 var GearIcon=(function(_super){
 	function GearIcon(owner){
 		this._storage=null;
@@ -9474,25 +10763,25 @@ var GearIcon=(function(_super){
 		GearIcon.__super.call(this,owner);
 	}
 
-	__class(GearIcon,'fairygui.GearIcon',_super);
+	__class(GearIcon,'fairygui.gears.GearIcon',_super);
 	var __proto=GearIcon.prototype;
 	__proto.init=function(){
 		this._default=this._owner.icon;
 		this._storage={};
 	}
 
-	__proto.addStatus=function(pageId,value){
+	__proto.addStatus=function(pageId,buffer){
 		if(pageId==null)
-			this._default=value;
+			this._default=buffer.readS();
 		else
-		this._storage[pageId]=value;
+		this._storage[pageId]=buffer.readS();
 	}
 
 	__proto.apply=function(){
 		this._owner._gearLocked=true;
 		var data=this._storage[this._controller.selectedPageId];
-		if(data!=undefined)
-			this._owner.icon=String(data);
+		if(data!==undefined)
+			this._owner.icon=data;
 		else
 		this._owner.icon=this._default;
 		this._owner._gearLocked=false;
@@ -9506,79 +10795,65 @@ var GearIcon=(function(_super){
 })(GearBase)
 
 
-//class fairygui.GearLook extends fairygui.GearBase
+//class fairygui.gears.GearLook extends fairygui.gears.GearBase
 var GearLook=(function(_super){
 	var GearLookValue;
 	function GearLook(owner){
-		this.tweener=null;
 		this._storage=null;
 		this._default=null;
-		this._tweenValue=null;
-		this._tweenTarget=null;
 		GearLook.__super.call(this,owner);
 	}
 
-	__class(GearLook,'fairygui.GearLook',_super);
+	__class(GearLook,'fairygui.gears.GearLook',_super);
 	var __proto=GearLook.prototype;
 	__proto.init=function(){
 		this._default=new GearLookValue(this._owner.alpha,this._owner.rotation,this._owner.grayed,this._owner.touchable);
 		this._storage={};
 	}
 
-	__proto.addStatus=function(pageId,value){
-		if(value=="-"|| value.length==0)
-			return;
-		var arr=value.split(",");
+	__proto.addStatus=function(pageId,buffer){
 		var gv;
-		if(pageId==null)
+		if (pageId==null)
 			gv=this._default;
 		else {
 			gv=new GearLookValue();
 			this._storage[pageId]=gv;
 		}
-		gv.alpha=parseFloat(arr[0]);
-		gv.rotation=parseInt(arr[1]);
-		gv.grayed=arr[2]=="1" ? true :false;
-		if(arr.length<4)
-			gv.touchable=this._owner.touchable;
-		else
-		gv.touchable=arr[3]=="1"?true:false;
+		gv.alpha=buffer.getFloat32();
+		gv.rotation=buffer.getFloat32();
+		gv.grayed=buffer.readBool();
+		gv.touchable=buffer.readBool();
 	}
 
 	__proto.apply=function(){
 		var gv=this._storage[this._controller.selectedPageId];
 		if(!gv)
 			gv=this._default;
-		if(this._tween && !UIPackage._constructing && !GearBase.disableAllTweenEffect){
+		if(this._tweenConfig!=null && this._tweenConfig.tween && !UIPackage._constructing && !GearBase.disableAllTweenEffect){
 			this._owner._gearLocked=true;
 			this._owner.grayed=gv.grayed;
 			this._owner.touchable=gv.touchable;
 			this._owner._gearLocked=false;
-			if (this.tweener !=null){
-				if (this._tweenTarget.alpha !=gv.alpha || this._tweenTarget.rotation !=gv.rotation){
-					this.tweener.complete();
-					this.tweener=null;
+			if (this._tweenConfig._tweener !=null){
+				if (this._tweenConfig._tweener.endValue.x !=gv.alpha || this._tweenConfig._tweener.endValue.y !=gv.rotation){
+					this._tweenConfig._tweener.kill(true);
+					this._tweenConfig._tweener=null;
 				}
 				else
 				return;
 			};
-			var a=gv.alpha !=this._owner.alpha;
-			var b=gv.rotation !=this._owner.rotation;
+			var a=gv.alpha!=this._owner.alpha;
+			var b=gv.rotation!=this._owner.rotation;
 			if(a || b){
 				if(this._owner.checkGearController(0,this._controller))
-					this._displayLockToken=this._owner.addDisplayLock();
-				this._tweenTarget=gv;
-				if(this._tweenValue==null)
-					this._tweenValue=new Point();
-				this._tweenValue.x=this._owner.alpha;
-				this._tweenValue.y=this._owner.rotation;
-				this.tweener=Tween.to(this._tweenValue,
-				{x:gv.alpha,y:gv.rotation },
-				this._tweenTime*1000,
-				this._easeType,
-				Handler.create(this,this.__tweenComplete),
-				this._delay*1000);
-				this.tweener.update=Handler.create(this,this.__tweenUpdate,[a,b],false);
+					this._tweenConfig._displayLockToken=this._owner.addDisplayLock();
+				this._tweenConfig._tweener=GTween.to2(this._owner.alpha,this._owner.rotation,gv.alpha,gv.rotation,this._tweenConfig.duration)
+				.setDelay(this._tweenConfig.delay)
+				.setEase(this._tweenConfig.easeType)
+				.setUserData((a ? 1 :0)+(b ? 2 :0))
+				.setTarget(this)
+				.onUpdate(this.__tweenUpdate,this)
+				.onComplete(this.__tweenComplete,this);
 			}
 		}
 		else {
@@ -9591,22 +10866,22 @@ var GearLook=(function(_super){
 		}
 	}
 
-	__proto.__tweenUpdate=function(a,b){
+	__proto.__tweenUpdate=function(tweener){
+		var flag=tweener.userData;
 		this._owner._gearLocked=true;
-		if(a)
-			this._owner.alpha=this._tweenValue.x;
-		if(b)
-			this._owner.rotation=this._tweenValue.y;
+		if ((flag & 1)!=0)
+			this._owner.alpha=tweener.value.x;
+		if ((flag & 2)!=0)
+			this._owner.rotation=tweener.value.y;
 		this._owner._gearLocked=false;
 	}
 
 	__proto.__tweenComplete=function(){
-		if(this._displayLockToken!=0){
-			this._owner.releaseDisplayLock(this._displayLockToken);
-			this._displayLockToken=0;
+		if(this._tweenConfig._displayLockToken!=0){
+			this._owner.releaseDisplayLock(this._tweenConfig._displayLockToken);
+			this._tweenConfig._displayLockToken=0;
 		}
-		this.tweener=null;
-		this._owner.displayObject.event("fui_gear_stop");
+		this._tweenConfig._tweener=null;
 	}
 
 	__proto.updateState=function(){
@@ -9647,30 +10922,168 @@ var GearLook=(function(_super){
 })(GearBase)
 
 
+//class fairygui.gears.GearSize extends fairygui.gears.GearBase
+var GearSize=(function(_super){
+	var GearSizeValue;
+	function GearSize(owner){
+		this._storage=null;
+		this._default=null;
+		GearSize.__super.call(this,owner);
+	}
+
+	__class(GearSize,'fairygui.gears.GearSize',_super);
+	var __proto=GearSize.prototype;
+	__proto.init=function(){
+		this._default=new GearSizeValue(this._owner.width,this._owner.height,
+		this._owner.scaleX,this._owner.scaleY);
+		this._storage={};
+	}
+
+	__proto.addStatus=function(pageId,buffer){
+		var gv;
+		if (pageId==null)
+			gv=this._default;
+		else {
+			gv=new GearSizeValue();
+			this._storage[pageId]=gv;
+		}
+		gv.width=buffer.getInt32();
+		gv.height=buffer.getInt32();
+		gv.scaleX=buffer.getFloat32();
+		gv.scaleY=buffer.getFloat32();
+	}
+
+	__proto.apply=function(){
+		var gv=this._storage[this._controller.selectedPageId];
+		if (!gv)
+			gv=this._default;
+		if(this._tweenConfig!=null && this._tweenConfig.tween && !UIPackage._constructing && !GearBase.disableAllTweenEffect){
+			if (this._tweenConfig._tweener !=null){
+				if (this._tweenConfig._tweener.endValue.x !=gv.width || this._tweenConfig._tweener.endValue.y !=gv.height
+					|| this._tweenConfig._tweener.endValue.z !=gv.scaleX || this._tweenConfig._tweener.endValue.w !=gv.scaleY){
+					this._tweenConfig._tweener.kill(true);
+					this._tweenConfig._tweener=null;
+				}
+				else
+				return;
+			};
+			var a=gv.width !=this._owner.width || gv.height !=this._owner.height;
+			var b=gv.scaleX !=this._owner.scaleX || gv.scaleY !=this._owner.scaleY;
+			if(a || b){
+				if(this._owner.checkGearController(0,this._controller))
+					this._tweenConfig._displayLockToken=this._owner.addDisplayLock();
+				this._tweenConfig._tweener=GTween.to4(this._owner.width,this._owner.height,this._owner.scaleX,this._owner.scaleY,gv.width,gv.height,gv.scaleX,gv.scaleY,this._tweenConfig.duration)
+				.setDelay(this._tweenConfig.delay)
+				.setEase(this._tweenConfig.easeType)
+				.setUserData((a ? 1 :0)+(b ? 2 :0))
+				.setTarget(this)
+				.onUpdate(this.__tweenUpdate,this)
+				.onComplete(this.__tweenComplete,this);
+			}
+		}
+		else {
+			this._owner._gearLocked=true;
+			this._owner.setSize(gv.width,gv.height,this._owner.checkGearController(1,this._controller));
+			this._owner.setScale(gv.scaleX,gv.scaleY);
+			this._owner._gearLocked=false;
+		}
+	}
+
+	__proto.__tweenUpdate=function(tweener){
+		var flag=tweener.userData;
+		this._owner._gearLocked=true;
+		if ((flag & 1)!=0)
+			this._owner.setSize(tweener.value.x,tweener.value.y,this._owner.checkGearController(1,this._controller));
+		if ((flag & 2)!=0)
+			this._owner.setScale(tweener.value.z,tweener.value.w);
+		this._owner._gearLocked=false;
+	}
+
+	__proto.__tweenComplete=function(){
+		if(this._tweenConfig._displayLockToken!=0){
+			this._owner.releaseDisplayLock(this._tweenConfig._displayLockToken);
+			this._tweenConfig._displayLockToken=0;
+		}
+		this._tweenConfig._tweener=null;
+	}
+
+	__proto.updateState=function(){
+		var gv=this._storage[this._controller.selectedPageId];
+		if(!gv){
+			gv=new GearSizeValue();
+			this._storage[this._controller.selectedPageId]=gv;
+		}
+		gv.width=this._owner.width;
+		gv.height=this._owner.height;
+		gv.scaleX=this._owner.scaleX;
+		gv.scaleY=this._owner.scaleY;
+	}
+
+	__proto.updateFromRelations=function(dx,dy){
+		if(this._controller==null || this._storage==null)
+			return;
+		for(var key in this._storage){
+			var gv=this._storage[key];
+			gv.width+=dx;
+			gv.height+=dy;
+		}
+		this._default.width+=dx;
+		this._default.height+=dy;
+		this.updateState();
+	}
+
+	GearSize.__init$=function(){
+		//class GearSizeValue
+		GearSizeValue=(function(){
+			function GearSizeValue(width,height,scaleX,scaleY){
+				this.width=NaN;
+				this.height=NaN;
+				this.scaleX=NaN;
+				this.scaleY=NaN;
+				(width===void 0)&& (width=0);
+				(height===void 0)&& (height=0);
+				(scaleX===void 0)&& (scaleX=0);
+				(scaleY===void 0)&& (scaleY=0);
+				this.width=width;
+				this.height=height;
+				this.scaleX=scaleX;
+				this.scaleY=scaleY;
+			}
+			__class(GearSizeValue,'');
+			return GearSizeValue;
+		})()
+	}
+
+	return GearSize;
+})(GearBase)
+
+
 //class fairygui.GGraph extends fairygui.GObject
 var GGraph=(function(_super){
 	function GGraph(){
-		this._type=NaN;
+		this._type=0;
 		this._lineSize=NaN;
 		this._lineColor=null;
 		this._fillColor=null;
-		this._corner=0;
+		this._cornerRadius=null;
+		this._hitArea=null;
 		GGraph.__super.call(this);
 		this._type=0;
 		this._lineSize=1;
 		this._lineColor="#000000"
 		this._fillColor="#FFFFFF";
-		this._corner=0;
+		this._cornerRadius=null;
 	}
 
 	__class(GGraph,'fairygui.GGraph',_super);
 	var __proto=GGraph.prototype;
-	Laya.imps(__proto,{"fairygui.IColorGear":true})
-	__proto.drawRect=function(lineSize,lineColor,fillColor){
+	Laya.imps(__proto,{"fairygui.gears.IColorGear":true})
+	__proto.drawRect=function(lineSize,lineColor,fillColor,cornerRadius){
 		this._type=1;
 		this._lineSize=lineSize;
 		this._lineColor=lineColor;
 		this._fillColor=fillColor;
+		this._cornerRadius=cornerRadius;
 		this.drawCommon();
 	}
 
@@ -9703,22 +11116,25 @@ var GGraph=(function(_super){
 			}
 		}
 		if (this._type==1){
-			if(this._corner > 0){
-				var fixCorner=w<h?w:h;
-				if(2*this._corner > fixCorner)
-					fixCorner=parseInt(fixCorner/2+"");
-				var path=[
-				["moveTo",fixCorner,0],
-				["arcTo",w,0,w,h,fixCorner],
-				["arcTo",w,h,0,h,fixCorner],
-				["arcTo",0,h,0,0,fixCorner],
-				["arcTo",0,0,w,0,fixCorner],
+			if(this._cornerRadius!=null){
+				var paths=[
+				["moveTo",this._cornerRadius[0],0],
+				["lineTo",w-this._cornerRadius[1],0],
+				["arcTo",w,0,w,this._cornerRadius[1],this._cornerRadius[1]],
+				["lineTo",w,h-this._cornerRadius[3]],
+				["arcTo",w,h,w-this._cornerRadius[3],h,this._cornerRadius[3]],
+				["lineTo",this._cornerRadius[2],h],
+				["arcTo",0,h,0,h-this._cornerRadius[2],this._cornerRadius[2]],
+				["lineTo",0,this._cornerRadius[0]],
+				["arcTo",0,0,this._cornerRadius[0],0,this._cornerRadius[0]],
 				["closePath"]];
-				gr.drawPath(0,0,path,{fillStyle:fillColor},this._lineSize>0?{strokeStyle:lineColor,lineWidth:this._lineSize}:null);
-			}else
+				gr.drawPath(0,0,paths,{fillStyle:fillColor},this._lineSize>0?{strokeStyle:lineColor,lineWidth:this._lineSize}:null);
+			}
+			else
 			gr.drawRect(0,0,w,h,fillColor,this._lineSize>0?lineColor:null,this._lineSize);
-		}else
-		gr.drawCircle(w/2,h/2,w/2,fillColor,this._lineSize>0?lineColor:null,this._lineSize);
+			}else{
+			gr.drawCircle(w/2,h/2,w/2,fillColor,this._lineSize>0?lineColor:null,this._lineSize);
+		}
 		this._displayObject.repaint();
 	}
 
@@ -9764,6 +11180,9 @@ var GGraph=(function(_super){
 	__proto.createDisplayObject=function(){
 		_super.prototype.createDisplayObject.call(this);
 		this._displayObject.mouseEnabled=false;
+		this._hitArea=new HitArea();
+		this._hitArea.hit=this._displayObject.graphics;
+		this._displayObject.hitArea=this._hitArea;
 	}
 
 	__proto.handleSizeChanged=function(){
@@ -9772,40 +11191,19 @@ var GGraph=(function(_super){
 			this.drawCommon();
 	}
 
-	__proto.setup_beforeAdd=function(xml){
-		_super.prototype.setup_beforeAdd.call(this,xml);
-		var type=xml.getAttribute("type");
-		if (type && type!="empty"){
-			var str;
-			str=xml.getAttribute("lineSize");
-			if (str)
-				this._lineSize=parseInt(str);
-			str=xml.getAttribute("lineColor");
-			if (str){
-				var c=ToolSet.convertFromHtmlColor(str,true);
-				var a=((c >> 24)& 0xFF)/ 0xFF;
-				if(a!=1)
-					this._lineColor="rgba("+((c>>16)& 0xFF)+","+((c>>8)& 0xFF)+","+(c & 0xFF)+","+a+")";
-				else
-				this._lineColor=Utils.toHexColor(c & 0xFFFFFF);
+	__proto.setup_beforeAdd=function(buffer,beginPos){
+		_super.prototype.setup_beforeAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,5);
+		this._type=buffer.readByte();
+		if (this._type!=0){
+			this._lineSize=buffer.getInt32();
+			this._lineColor=buffer.readColorS(true);
+			this._fillColor=buffer.readColorS(true);
+			if (buffer.readBool()){
+				this._cornerRadius=[];
+				for (var i=0;i < 4;i++)
+				this._cornerRadius[i]=buffer.getFloat32();
 			}
-			str=xml.getAttribute("fillColor");
-			if (str){
-				c=ToolSet.convertFromHtmlColor(str,true);
-				a=((c >> 24)& 0xFF)/ 0xFF;
-				if(a!=1)
-					this._fillColor="rgba("+((c>>16)& 0xFF)+","+((c>>8)& 0xFF)+","+(c & 0xFF)+","+a+")";
-				else
-				this._fillColor=Utils.toHexColor(c & 0xFFFFFF);
-			}
-			str=xml.getAttribute("corner");
-			if (str){
-				this._corner=parseInt(str);
-			}
-			if (type=="rect")
-				this._type=1;
-			else
-			this._type=2;
 			this.drawCommon();
 		}
 	}
@@ -9863,8 +11261,8 @@ var GGroup=(function(_super){
 		var cnt=this._parent.numChildren;
 		var i=0;
 		var child;
-		var ax=Number.MAX_VALUE,ay=Number.MAX_VALUE;
-		var ar=Number.MIN_VALUE,ab=Number.MIN_VALUE;
+		var ax=Number.POSITIVE_INFINITY,ay=Number.POSITIVE_INFINITY;
+		var ar=Number.NEGATIVE_INFINITY,ab=Number.NEGATIVE_INFINITY;
 		var tmp=0;
 		var empty=true;
 		for(i=0;i<cnt;i++){
@@ -10127,27 +11525,26 @@ var GGroup=(function(_super){
 		}
 	}
 
-	__proto.setup_beforeAdd=function(xml){
-		_super.prototype.setup_beforeAdd.call(this,xml);
-		var str;
-		str=xml.getAttribute("layout");
-		if (str !=null){
-			this._layout=GroupLayoutType.parse(str);
-			str=xml.getAttribute("lineGap");
-			if(str)
-				this._lineGap=parseInt(str);
-			str=xml.getAttribute("colGap");
-			if(str)
-				this._columnGap=parseInt(str);
-		}
+	__proto.setup_beforeAdd=function(buffer,beginPos){
+		_super.prototype.setup_beforeAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,5);
+		this._layout=buffer.readByte();
+		this._lineGap=buffer.getInt32();
+		this._columnGap=buffer.getInt32();
 	}
 
-	__proto.setup_afterAdd=function(xml){
-		_super.prototype.setup_afterAdd.call(this,xml);
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		_super.prototype.setup_afterAdd.call(this,buffer,beginPos);
 		if(!this.visible)
 			this.handleVisibleChanged();
 	}
 
+	/**
+	*@see GroupLayout
+	*/
+	/**
+	*@see GroupLayout
+	*/
 	__getset(0,__proto,'layout',function(){
 		return this._layout;
 		},function(value){
@@ -10179,154 +11576,43 @@ var GGroup=(function(_super){
 })(GObject)
 
 
-//class fairygui.GearSize extends fairygui.GearBase
-var GearSize=(function(_super){
-	var GearSizeValue;
-	function GearSize(owner){
-		this.tweener=null;
+//class fairygui.gears.GearText extends fairygui.gears.GearBase
+var GearText=(function(_super){
+	function GearText(owner){
 		this._storage=null;
 		this._default=null;
-		this._tweenValue=null;
-		this._tweenTarget=null;
-		GearSize.__super.call(this,owner);
+		GearText.__super.call(this,owner);
 	}
 
-	__class(GearSize,'fairygui.GearSize',_super);
-	var __proto=GearSize.prototype;
+	__class(GearText,'fairygui.gears.GearText',_super);
+	var __proto=GearText.prototype;
 	__proto.init=function(){
-		this._default=new GearSizeValue(this._owner.width,this._owner.height,
-		this._owner.scaleX,this._owner.scaleY);
+		this._default=this._owner.text;
 		this._storage={};
 	}
 
-	__proto.addStatus=function(pageId,value){
-		if(value=="-"|| value.length==0)
-			return;
-		var arr=value.split(",");
-		var gv;
-		if (pageId==null)
-			gv=this._default;
-		else {
-			gv=new GearSizeValue();
-			this._storage[pageId]=gv;
-		}
-		gv.width=parseInt(arr[0]);
-		gv.height=parseInt(arr[1]);
-		if(arr.length>2){
-			gv.scaleX=parseFloat(arr[2]);
-			gv.scaleY=parseFloat(arr[3]);
-		}
+	__proto.addStatus=function(pageId,buffer){
+		if(pageId==null)
+			this._default=buffer.readS();
+		else
+		this._storage[pageId]=buffer.readS();
 	}
 
 	__proto.apply=function(){
-		var gv=this._storage[this._controller.selectedPageId];
-		if (!gv)
-			gv=this._default;
-		if(this._tween && !UIPackage._constructing && !GearBase.disableAllTweenEffect){
-			if(this.tweener!=null){
-				if (this._tweenTarget.width !=gv.width || this._tweenTarget.height !=gv.height
-					|| this._tweenTarget.scaleX !=gv.scaleX || this._tweenTarget.scaleY !=gv.scaleY){
-					this.tweener.complete();
-					this.tweener=null;
-				}
-				else
-				return;
-			};
-			var a=gv.width !=this._owner.width || gv.height !=this._owner.height;
-			var b=gv.scaleX !=this._owner.scaleX || gv.scaleY !=this._owner.scaleY;
-			if(a || b){
-				if(this._owner.checkGearController(0,this._controller))
-					this._displayLockToken=this._owner.addDisplayLock();
-				this._tweenTarget=gv;
-				if(this._tweenValue==null)
-					this._tweenValue=new GearSizeValue();
-				this._tweenValue.width=this._owner.width;
-				this._tweenValue.height=this._owner.height;
-				this._tweenValue.scaleX=this._owner.scaleX;
-				this._tweenValue.scaleY=this._owner.scaleY;
-				this.tweener=Tween.to(this._tweenValue,
-				{width:gv.width,height:gv.height,scaleX:gv.scaleX,scaleY:gv.scaleY },
-				this._tweenTime*1000,
-				this._easeType,
-				Handler.create(this,this.__tweenComplete),
-				this._delay*1000);
-				this.tweener.update=Handler.create(this,this.__tweenUpdate,[a,b],false);
-			}
-		}
-		else {
-			this._owner._gearLocked=true;
-			this._owner.setSize(gv.width,gv.height,this._owner.checkGearController(1,this._controller));
-			this._owner.setScale(gv.scaleX,gv.scaleY);
-			this._owner._gearLocked=false;
-		}
-	}
-
-	__proto.__tweenUpdate=function(a,b){
 		this._owner._gearLocked=true;
-		if(a)
-			this._owner.setSize(this._tweenValue.width,this._tweenValue.height,this._owner.checkGearController(1,this._controller));
-		if(b)
-			this._owner.setScale(this._tweenValue.scaleX,this._tweenValue.scaleY);
+		var data=this._storage[this._controller.selectedPageId];
+		if(data!==undefined)
+			this._owner.text=data;
+		else
+		this._owner.text=this._default;
 		this._owner._gearLocked=false;
 	}
 
-	__proto.__tweenComplete=function(){
-		if(this._displayLockToken!=0){
-			this._owner.releaseDisplayLock(this._displayLockToken);
-			this._displayLockToken=0;
-		}
-		this.tweener=null;
-		this._owner.displayObject.event("fui_gear_stop");
-	}
-
 	__proto.updateState=function(){
-		var gv=this._storage[this._controller.selectedPageId];
-		if(!gv){
-			gv=new GearSizeValue();
-			this._storage[this._controller.selectedPageId]=gv;
-		}
-		gv.width=this._owner.width;
-		gv.height=this._owner.height;
-		gv.scaleX=this._owner.scaleX;
-		gv.scaleY=this._owner.scaleY;
+		this._storage[this._controller.selectedPageId]=this._owner.text;
 	}
 
-	__proto.updateFromRelations=function(dx,dy){
-		if(this._controller==null || this._storage==null)
-			return;
-		for(var key in this._storage){
-			var gv=this._storage[key];
-			gv.width+=dx;
-			gv.height+=dy;
-		}
-		this._default.width+=dx;
-		this._default.height+=dy;
-		this.updateState();
-	}
-
-	GearSize.__init$=function(){
-		//class GearSizeValue
-		GearSizeValue=(function(){
-			function GearSizeValue(width,height,scaleX,scaleY){
-				this.width=NaN;
-				this.height=NaN;
-				this.scaleX=NaN;
-				this.scaleY=NaN;
-				(width===void 0)&& (width=0);
-				(height===void 0)&& (height=0);
-				(scaleX===void 0)&& (scaleX=0);
-				(scaleY===void 0)&& (scaleY=0);
-				this.width=width;
-				this.height=height;
-				this.scaleX=scaleX;
-				this.scaleY=scaleY;
-			}
-			__class(GearSizeValue,'');
-			return GearSizeValue;
-		})()
-	}
-
-	return GearSize;
+	return GearText;
 })(GearBase)
 
 
@@ -10342,7 +11628,7 @@ var GImage=(function(_super){
 
 	__class(GImage,'fairygui.GImage',_super);
 	var __proto=GImage.prototype;
-	Laya.imps(__proto,{"fairygui.IColorGear":true})
+	Laya.imps(__proto,{"fairygui.gears.IColorGear":true})
 	__proto.applyColor=function(){}
 	__proto.createDisplayObject=function(){
 		this._displayObject=this.image=new Image$1();
@@ -10379,15 +11665,18 @@ var GImage=(function(_super){
 		}
 	}
 
-	__proto.setup_beforeAdd=function(xml){
-		_super.prototype.setup_beforeAdd.call(this,xml);
-		var str;
-		str=xml.getAttribute("color");
-		if(str)
-			this.color=str;
-		str=xml.getAttribute("flip");
-		if(str)
-			this.flip=FlipType.parse(str);
+	__proto.setup_beforeAdd=function(buffer,beginPos){
+		_super.prototype.setup_beforeAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,5);
+		if (buffer.readBool())
+			this.color=buffer.readColorS();
+		this.flip=buffer.readByte();
+		this.image.fillMethod=buffer.readByte();
+		if (this.image.fillMethod !=0){
+			this.image.fillOrigin=buffer.readByte();
+			this.image.fillClockwise=buffer.readBool();
+			this.image.fillAmount=buffer.getFloat32();
+		}
 	}
 
 	__getset(0,__proto,'color',function(){
@@ -10400,7 +11689,18 @@ var GImage=(function(_super){
 		}
 	});
 
-	//not supported yet
+	__getset(0,__proto,'fillClockwise',function(){
+		return this.image.fillClockwise;
+		},function(value){
+		this.image.fillClockwise=value;
+	});
+
+	/**
+	*@see FlipType
+	*/
+	/**
+	*@see FlipType
+	*/
 	__getset(0,__proto,'flip',function(){
 		return this._flip;
 		},function(value){
@@ -10416,111 +11716,77 @@ var GImage=(function(_super){
 		}
 	});
 
+	__getset(0,__proto,'fillMethod',function(){
+		return this.image.fillMethod;
+		},function(value){
+		this.image.fillMethod=value;
+	});
+
+	__getset(0,__proto,'fillOrigin',function(){
+		return this.image.fillOrigin;
+		},function(value){
+		this.image.fillOrigin=value;
+	});
+
+	__getset(0,__proto,'fillAmount',function(){
+		return this.image.fillAmount;
+		},function(value){
+		this.image.fillAmount=value;
+	});
+
 	return GImage;
 })(GObject)
 
 
-//class fairygui.GearText extends fairygui.GearBase
-var GearText=(function(_super){
-	function GearText(owner){
-		this._storage=null;
-		this._default=null;
-		GearText.__super.call(this,owner);
-	}
-
-	__class(GearText,'fairygui.GearText',_super);
-	var __proto=GearText.prototype;
-	__proto.init=function(){
-		this._default=this._owner.text;
-		this._storage={};
-	}
-
-	__proto.addStatus=function(pageId,value){
-		if(pageId==null)
-			this._default=value;
-		else
-		this._storage[pageId]=value;
-	}
-
-	__proto.apply=function(){
-		this._owner._gearLocked=true;
-		var data=this._storage[this._controller.selectedPageId];
-		if(data!=undefined)
-			this._owner.text=String(data);
-		else
-		this._owner.text=this._default;
-		this._owner._gearLocked=false;
-	}
-
-	__proto.updateState=function(){
-		this._storage[this._controller.selectedPageId]=this._owner.text;
-	}
-
-	return GearText;
-})(GearBase)
-
-
-//class fairygui.GearXY extends fairygui.GearBase
+//class fairygui.gears.GearXY extends fairygui.gears.GearBase
 var GearXY=(function(_super){
 	function GearXY(owner){
-		this.tweener=null;
 		this._storage=null;
 		this._default=null;
-		this._tweenValue=null;
-		this._tweenTarget=null;
 		GearXY.__super.call(this,owner);
 	}
 
-	__class(GearXY,'fairygui.GearXY',_super);
+	__class(GearXY,'fairygui.gears.GearXY',_super);
 	var __proto=GearXY.prototype;
 	__proto.init=function(){
 		this._default=new Point(this._owner.x,this._owner.y);
 		this._storage={};
 	}
 
-	__proto.addStatus=function(pageId,value){
-		if(value=="-"|| value.length==0)
-			return;
-		var arr=value.split(",");
-		var pt;
+	__proto.addStatus=function(pageId,buffer){
+		var gv;
 		if (pageId==null)
-			pt=this._default;
+			gv=this._default;
 		else {
-			pt=new Point();
-			this._storage[pageId]=pt;
+			gv=new Point();
+			this._storage[pageId]=gv;
 		}
-		pt.x=parseInt(arr[0]);
-		pt.y=parseInt(arr[1]);
+		gv.x=buffer.getInt32();
+		gv.y=buffer.getInt32();
 	}
 
 	__proto.apply=function(){
 		var pt=this._storage[this._controller.selectedPageId];
 		if (!pt)
 			pt=this._default;
-		if(this._tween && !UIPackage._constructing && !GearBase.disableAllTweenEffect){
-			if(this.tweener){
-				if(this._tweenTarget.x!=pt.x || this._tweenTarget.y!=pt.y){
-					this.tweener.complete();
-					this.tweener=null;
+		if(this._tweenConfig!=null && this._tweenConfig.tween && !UIPackage._constructing && !GearBase.disableAllTweenEffect){
+			if (this._tweenConfig._tweener !=null){
+				if (this._tweenConfig._tweener.endValue.x !=pt.x || this._tweenConfig._tweener.endValue.y !=pt.y){
+					this._tweenConfig._tweener.kill(true);
+					this._tweenConfig._tweener=null;
 				}
 				else
 				return;
 			}
-			if(this._owner.x !=pt.x || this._owner.y !=pt.y){
+			if (this._owner.x !=pt.x || this._owner.y !=pt.y){
 				if(this._owner.checkGearController(0,this._controller))
-					this._displayLockToken=this._owner.addDisplayLock();
-				this._tweenTarget=pt;
-				if(this._tweenValue==null)
-					this._tweenValue=new Point();
-				this._tweenValue.x=this._owner.x;
-				this._tweenValue.y=this._owner.y;
-				this.tweener=Tween.to(this._tweenValue,
-				{x:pt.x,y:pt.y },
-				this._tweenTime*1000,
-				this._easeType,
-				Handler.create(this,this.__tweenComplete),
-				this._delay*1000);
-				this.tweener.update=Handler.create(this,this.__tweenUpdate,null,false);
+					this._tweenConfig._displayLockToken=this._owner.addDisplayLock();
+				this._tweenConfig._tweener=GTween.to2(this._owner.x,this._owner.y,pt.x,pt.y,this._tweenConfig.duration)
+				.setDelay(this._tweenConfig.delay)
+				.setEase(this._tweenConfig.easeType)
+				.setTarget(this)
+				.onUpdate(this.__tweenUpdate,this)
+				.onComplete(this.__tweenComplete,this);
 			}
 		}
 		else {
@@ -10530,19 +11796,18 @@ var GearXY=(function(_super){
 		}
 	}
 
-	__proto.__tweenUpdate=function(){
+	__proto.__tweenUpdate=function(tweener){
 		this._owner._gearLocked=true;
-		this._owner.setXY(this._tweenValue.x,this._tweenValue.y);
+		this._owner.setXY(tweener.value.x,tweener.value.y);
 		this._owner._gearLocked=false;
 	}
 
 	__proto.__tweenComplete=function(){
-		if(this._displayLockToken!=0){
-			this._owner.releaseDisplayLock(this._displayLockToken);
-			this._displayLockToken=0;
+		if(this._tweenConfig._displayLockToken!=0){
+			this._owner.releaseDisplayLock(this._tweenConfig._displayLockToken);
+			this._tweenConfig._displayLockToken=0;
 		}
-		this.tweener=null;
-		this._owner.displayObject.event("fui_gear_stop");
+		this._tweenConfig._tweener=null;
 	}
 
 	__proto.updateState=function(){
@@ -10580,6 +11845,7 @@ var GLoader=(function(_super){
 		this._valign=null;
 		this._autoSize=false;
 		this._fill=0;
+		this._shrinkOnly=false;
 		this._showErrorSign=false;
 		this._playing=false;
 		this._frame=0;
@@ -10591,6 +11857,7 @@ var GLoader=(function(_super){
 		this._contentHeight=0;
 		this._content=null;
 		this._errorSign=null;
+		this._content2=null;
 		this._updatingLayout=false;
 		GLoader.__super.call(this);
 		this._playing=true;
@@ -10604,7 +11871,7 @@ var GLoader=(function(_super){
 
 	__class(GLoader,'fairygui.GLoader',_super);
 	var __proto=GLoader.prototype;
-	Laya.imps(__proto,{"fairygui.IAnimationGear":true,"fairygui.IColorGear":true})
+	Laya.imps(__proto,{"fairygui.gears.IAnimationGear":true,"fairygui.gears.IColorGear":true})
 	__proto.createDisplayObject=function(){
 		_super.prototype.createDisplayObject.call(this);
 		this._displayObject.mouseEnabled=true;
@@ -10616,7 +11883,14 @@ var GLoader=(function(_super){
 			if(texture !=null)
 				this.freeExternal(texture);
 		}
+		if(this._content2!=null)
+			this._content2.dispose();
 		_super.prototype.dispose.call(this);
+	}
+
+	__proto.advance=function(timeInMiniseconds){
+		if((this._content instanceof fairygui.display.MovieClip ))
+			(this._content).advance(timeInMiniseconds);
 	}
 
 	__proto.applyColor=function(){}
@@ -10656,7 +11930,7 @@ var GLoader=(function(_super){
 					this.updateLayout();
 				}
 			}
-			else if(this._contentItem.type==2){
+			else if(this._contentItem.type==1){
 				if(!((this._content instanceof fairygui.display.MovieClip ))){
 					this._content=new MovieClip$1();
 					this._displayObject.addChild(this._content);
@@ -10672,6 +11946,22 @@ var GLoader=(function(_super){
 				(this._content).boundsRect=new Rectangle(0,0,this._contentSourceWidth,this._contentSourceHeight);
 				this.updateLayout();
 			}
+			else if(this._contentItem.type==3){
+				var obj=UIPackage.createObjectFromURL(itemURL);
+				if(!obj)
+					this.setErrorState();
+				else if(!((obj instanceof fairygui.GComponent ))){
+					obj.dispose();
+					this.setErrorState();
+				}
+				else{
+					this._content2=obj.asCom;
+					this._displayObject.addChild(this._content2.displayObject);
+					this._contentSourceWidth=this._contentItem.width;
+					this._contentSourceHeight=this._contentItem.height;
+					this.updateLayout();
+				}
+			}
 			else
 			this.setErrorState();
 		}
@@ -10680,7 +11970,7 @@ var GLoader=(function(_super){
 	}
 
 	__proto.loadExternal=function(){
-		AssetProxy.inst.load(this._url,Handler.create(this,this.__getResCompleted));
+		AssetProxy.inst.load(this._url,Handler.create(this,this.__getResCompleted),null,"image");
 	}
 
 	__proto.freeExternal=function(texture){}
@@ -10733,7 +12023,7 @@ var GLoader=(function(_super){
 	}
 
 	__proto.updateLayout=function(){
-		if (this._content==null){
+		if (this._content2==null && this._content==null){
 			if (this._autoSize){
 				this._updatingLayout=true;
 				this.setSize(50,30);
@@ -10741,10 +12031,6 @@ var GLoader=(function(_super){
 			}
 			return;
 		}
-		this._content.x=0;
-		this._content.y=0;
-		this._content.scaleX=1;
-		this._content.scaleY=1;
 		this._contentWidth=this._contentSourceWidth;
 		this._contentHeight=this._contentSourceHeight;
 		if (this._autoSize){
@@ -10755,8 +12041,19 @@ var GLoader=(function(_super){
 				this._contentHeight=30;
 			this.setSize(this._contentWidth,this._contentHeight);
 			this._updatingLayout=false;
-			if(this._contentWidth==this._width && this._contentHeight==this._height)
+			if(this._contentWidth==this._width && this._contentHeight==this._height){
+				if(this._content2!=null){
+					this._content2.setXY(0,0);
+					this._content2.setScale(1,1);
+				}
+				else{
+					this._content.x=0;
+					this._content.y=0;
+					this._content.scaleX=1;
+					this._content.scaleY=1;
+				}
 				return;
+			}
 		};
 		var sx=1,sy=1;
 		if(this._fill!=0){
@@ -10779,22 +12076,41 @@ var GLoader=(function(_super){
 					else
 					sx=sy;
 				}
+				if(this._shrinkOnly){
+					if(sx>1)
+						sx=1;
+					if(sy>1)
+						sy=1;
+				}
 				this._contentWidth=this._contentSourceWidth *sx;
 				this._contentHeight=this._contentSourceHeight *sy;
 			}
 		}
-		if ((this._content instanceof fairygui.display.Image ))
-			(this._content).scaleTexture(sx,sy);
+		if(this._content2!=null)
+			this._content2.setScale(sx,sy);
+		else if ((this._content instanceof fairygui.display.Image ))
+		(this._content).scaleTexture(sx,sy);
 		else
 		this._content.scale(sx,sy);
+		var nx=NaN,ny=NaN;
 		if (this._align=="center")
-			this._content.x=Math.floor((this.width-this._contentWidth)/ 2);
+			nx=Math.floor((this.width-this._contentWidth)/ 2);
 		else if (this._align=="right")
-		this._content.x=this.width-this._contentWidth;
+		nx=this.width-this._contentWidth;
+		else
+		nx=0;
 		if (this._valign=="middle")
-			this._content.y=Math.floor((this.height-this._contentHeight)/ 2);
+			ny=Math.floor((this.height-this._contentHeight)/ 2);
 		else if (this._valign=="bottom")
-		this._content.y=this.height-this._contentHeight;
+		ny=this.height-this._contentHeight;
+		else
+		ny=0;
+		if(this._content2!=null)
+			this._content2.setXY(nx,ny);
+		else{
+			this._content.x=nx;
+			this._content.y=ny;
+		}
 	}
 
 	__proto.clearContent=function(){
@@ -10806,6 +12122,10 @@ var GLoader=(function(_super){
 			if(texture !=null)
 				this.freeExternal(texture);
 		}
+		if(this._content2!=null){
+			this._content2.dispose();
+			this._content2=null;
+		}
 		this._contentItem=null;
 	}
 
@@ -10815,29 +12135,26 @@ var GLoader=(function(_super){
 			this.updateLayout();
 	}
 
-	__proto.setup_beforeAdd=function(xml){
-		_super.prototype.setup_beforeAdd.call(this,xml);
-		var str;
-		str=xml.getAttribute("url");
-		if (str)
-			this._url=str;
-		str=xml.getAttribute("align");
-		if (str)
-			this._align=str;
-		str=xml.getAttribute("vAlign");
-		if (str)
-			this._valign=str;
-		str=xml.getAttribute("fill");
-		if (str)
-			this._fill=LoaderFillType.parse(str);
-		this._autoSize=xml.getAttribute("autoSize")=="true";
-		str=xml.getAttribute("errorSign");
-		if (str)
-			this._showErrorSign=str=="true";
-		this._playing=xml.getAttribute("playing")!="false";
-		str=xml.getAttribute("color");
-		if(str)
-			this.color=str;
+	__proto.setup_beforeAdd=function(buffer,beginPos){
+		_super.prototype.setup_beforeAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,5);
+		var iv=0;
+		this._url=buffer.readS();
+		iv=buffer.readByte();
+		this._align=iv==0?"left":(iv==1?"center":"right");
+		iv=buffer.readByte();
+		this._valign=iv==0?"top":(iv==1?"middle":"bottom");
+		this._fill=buffer.readByte();
+		this._shrinkOnly=buffer.readBool();
+		this._autoSize=buffer.readBool();
+		this._showErrorSign=buffer.readBool();
+		this._playing=buffer.readBool();
+		this._frame=buffer.getInt32();
+		if (buffer.readBool())
+			this.color=buffer.readColorS();
+		var fillMethod=buffer.readByte();
+		if (fillMethod !=0)
+			buffer.skip(6);
 		if (this._url)
 			this.loadContent();
 	}
@@ -10848,7 +12165,7 @@ var GLoader=(function(_super){
 		if (this._frame !=value){
 			this._frame=value;
 			if ((this._content instanceof fairygui.display.MovieClip ))
-				(this._content).currentFrame=value;
+				(this._content).frame=value;
 			this.updateGear(5);
 		}
 	});
@@ -10872,16 +12189,12 @@ var GLoader=(function(_super){
 		}
 	});
 
-	__getset(0,__proto,'color',function(){
-		return this._color;
-		},function(value){
-		if(this._color !=value){
-			this._color=value;
-			this.updateGear(4);
-			this.applyColor();
-		}
-	});
-
+	/**
+	*@see LoaderFillType
+	*/
+	/**
+	*@see LoaderFillType
+	*/
 	__getset(0,__proto,'fill',function(){
 		return this._fill;
 		},function(value){
@@ -10904,6 +12217,19 @@ var GLoader=(function(_super){
 		return this._url;
 		},function(value){
 		this.url=value;
+	});
+
+	__getset(0,__proto,'content',function(){
+		return this._content;
+	});
+
+	__getset(0,__proto,'shrinkOnly',function(){
+		return this._shrinkOnly;
+		},function(value){
+		if(this._shrinkOnly!=value){
+			this._shrinkOnly=value;
+			this.updateLayout();
+		}
 	});
 
 	//todo:
@@ -10933,8 +12259,28 @@ var GLoader=(function(_super){
 		}
 	});
 
-	__getset(0,__proto,'content',function(){
-		return this._content;
+	__getset(0,__proto,'timeScale',function(){
+		if((this._content instanceof fairygui.display.MovieClip ))
+			return (this._content).timeScale;
+		else
+		return 1;
+		},function(value){
+		if((this._content instanceof fairygui.display.MovieClip ))
+			(this._content).timeScale=value;
+	});
+
+	__getset(0,__proto,'color',function(){
+		return this._color;
+		},function(value){
+		if(this._color !=value){
+			this._color=value;
+			this.updateGear(4);
+			this.applyColor();
+		}
+	});
+
+	__getset(0,__proto,'component',function(){
+		return this._content2;
 	});
 
 	__static(GLoader,
@@ -10947,18 +12293,30 @@ var GLoader=(function(_super){
 //class fairygui.GMovieClip extends fairygui.GObject
 var GMovieClip=(function(_super){
 	function GMovieClip(){
-		this.movieClip=null;
+		this._movieClip=null;
 		GMovieClip.__super.call(this);
 		this._sizeImplType=1;
 	}
 
 	__class(GMovieClip,'fairygui.GMovieClip',_super);
 	var __proto=GMovieClip.prototype;
-	Laya.imps(__proto,{"fairygui.IAnimationGear":true,"fairygui.IColorGear":true})
+	Laya.imps(__proto,{"fairygui.gears.IAnimationGear":true,"fairygui.gears.IColorGear":true})
 	__proto.createDisplayObject=function(){
-		this._displayObject=this.movieClip=new MovieClip$1();
-		this.movieClip.mouseEnabled=false;
+		this._displayObject=this._movieClip=new MovieClip$1();
+		this._movieClip.mouseEnabled=false;
 		this._displayObject["$owner"]=this;
+	}
+
+	__proto.rewind=function(){
+		this._movieClip.rewind();
+	}
+
+	__proto.syncStatus=function(anotherMc){
+		this._movieClip.syncStatus(anotherMc._movieClip);
+	}
+
+	__proto.advance=function(timeInMiniseconds){
+		this._movieClip.advance(timeInMiniseconds);
 	}
 
 	//从start帧开始，播放到end帧（-1表示结尾），重复times次（0表示无限循环），循环结束后，停止在endAt帧（-1表示参数end）
@@ -10967,7 +12325,7 @@ var GMovieClip=(function(_super){
 		(end===void 0)&& (end=-1);
 		(times===void 0)&& (times=0);
 		(endAt===void 0)&& (endAt=-1);
-		this.movieClip.setPlaySettings(start,end,times,endAt,endHandler);
+		this._movieClip.setPlaySettings(start,end,times,endAt,endHandler);
 	}
 
 	__proto.constructFromResource=function(){
@@ -10977,24 +12335,21 @@ var GMovieClip=(function(_super){
 		this.initHeight=this.sourceHeight;
 		this.setSize(this.sourceWidth,this.sourceHeight);
 		this.packageItem.load();
-		this.movieClip.interval=this.packageItem.interval;
-		this.movieClip.swing=this.packageItem.swing;
-		this.movieClip.repeatDelay=this.packageItem.repeatDelay;
-		this.movieClip.frames=this.packageItem.frames;
-		this.movieClip.boundsRect=new Rectangle(0,0,this.sourceWidth,this.sourceHeight);
+		this._movieClip.interval=this.packageItem.interval;
+		this._movieClip.swing=this.packageItem.swing;
+		this._movieClip.repeatDelay=this.packageItem.repeatDelay;
+		this._movieClip.frames=this.packageItem.frames;
+		this._movieClip.boundsRect=new Rectangle(0,0,this.sourceWidth,this.sourceHeight);
 	}
 
-	__proto.setup_beforeAdd=function(xml){
-		_super.prototype.setup_beforeAdd.call(this,xml);
-		var str;
-		str=xml.getAttribute("frame");
-		if (str)
-			this.movieClip.currentFrame=parseInt(str);
-		str=xml.getAttribute("playing");
-		this.movieClip.playing=str !="false";
-		str=xml.getAttribute("color");
-		if(str)
-			this.color=str;
+	__proto.setup_beforeAdd=function(buffer,beginPos){
+		_super.prototype.setup_beforeAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,5);
+		if (buffer.readBool())
+			this.color=buffer.readColorS();
+		buffer.readByte();
+		this._movieClip.frame=buffer.getInt32();
+		this._movieClip.playing=buffer.readBool();
 	}
 
 	__getset(0,__proto,'color',function(){
@@ -11003,19 +12358,25 @@ var GMovieClip=(function(_super){
 	});
 
 	__getset(0,__proto,'playing',function(){
-		return this.movieClip.playing;
+		return this._movieClip.playing;
 		},function(value){
-		if (this.movieClip.playing !=value){
-			this.movieClip.playing=value;
+		if (this._movieClip.playing !=value){
+			this._movieClip.playing=value;
 			this.updateGear(5);
 		}
 	});
 
-	__getset(0,__proto,'frame',function(){
-		return this.movieClip.currentFrame;
+	__getset(0,__proto,'timeScale',function(){
+		return this._movieClip.timeScale;
 		},function(value){
-		if (this.movieClip.currentFrame !=value){
-			this.movieClip.currentFrame=value;
+		this._movieClip.timeScale=value;
+	});
+
+	__getset(0,__proto,'frame',function(){
+		return this._movieClip.frame;
+		},function(value){
+		if (this._movieClip.frame !=value){
+			this._movieClip.frame=value;
 			this.updateGear(5);
 		}
 	});
@@ -11031,7 +12392,6 @@ var GBasicTextField=(function(_super){
 		this.textField=null;
 		this._font=null;
 		this._color=null;
-		this._text=null;
 		this._ubbEnabled=false;
 		this._singleLine=false;
 		this._letterSpacing=0;
@@ -11141,9 +12501,12 @@ var GBasicTextField=(function(_super){
 		var fontScale=this._bitmapFont.resizable?fontSize/this._bitmapFont.size:1;
 		this._textWidth=0;
 		this._textHeight=0;
-		var textLength=this._text.length;
+		var text2=this._text;
+		if (this._templateVars !=null)
+			text2=this.parseTemplate(text2);
+		var textLength=text2.length;
 		for (var offset=0;offset < textLength;++offset){
-			var ch=this._text.charAt(offset);
+			var ch=text2.charAt(offset);
 			var cc=ch.charCodeAt(0);
 			if (cc==10){
 				lineBuffer+=ch;
@@ -11317,11 +12680,13 @@ var GBasicTextField=(function(_super){
 				glyph=this._bitmapFont.glyphs[ch];
 				if (glyph !=null){
 					charIndent=(line.height+line.textHeight)/ 2-Math.ceil(glyph.lineHeight*fontScale);
-					gr.drawTexture(glyph.texture,
-					charX+lineIndent+Math.ceil(glyph.offsetX*fontScale),
-					line.y+charIndent+Math.ceil(glyph.offsetY*fontScale),
-					glyph.texture.width *fontScale,
-					glyph.texture.height *fontScale);
+					if(glyph.texture){
+						gr.drawTexture(glyph.texture,
+						charX+lineIndent+Math.ceil(glyph.offsetX*fontScale),
+						line.y+charIndent+Math.ceil(glyph.offsetY*fontScale),
+						glyph.texture.width *fontScale,
+						glyph.texture.height *fontScale);
+					}
 					charX+=letterSpacing+Math.ceil(glyph.advance*fontScale);
 				}
 				else {
@@ -11378,12 +12743,8 @@ var GBasicTextField=(function(_super){
 		this.handleXYChanged();
 	}
 
-	__proto.setup_beforeAdd=function(xml){
-		_super.prototype.setup_beforeAdd.call(this,xml);
-		var str;
-		str=xml.getAttribute("autoSize");
-		if (str)
-			this.setAutoSize(AutoSizeType.parse(str));
+	__proto.flushVars=function(){
+		this.text=this._text;
 	}
 
 	__getset(0,__proto,'bold',function(){
@@ -11413,10 +12774,13 @@ var GBasicTextField=(function(_super){
 		if(this._bitmapFont==null){
 			if(this._widthAutoSize)
 				this.textField.width=10000;
+			var text2=this._text;
+			if (this._templateVars !=null)
+				text2=this.parseTemplate(text2);
 			if(this._ubbEnabled)
-				this.textField.text=ToolSet.removeUBB(ToolSet.encodeHTML(this._text));
+				this.textField.text=ToolSet.removeUBB(ToolSet.encodeHTML(text2));
 			else
-			this.textField.text=this._text;
+			this.textField.text=text2;
 		}
 		else{
 			this.textField.text="";
@@ -11444,12 +12808,14 @@ var GBasicTextField=(function(_super){
 		return this.textField.font;
 		},function(value){
 		this._font=value;
-		if(ToolSet.startsWith(this._font,"ui://")){
-			this._bitmapFont=UIPackage.getBitmapFontByURL(this._font);
+		if(ToolSet.startsWith(this._font,"ui://"))
+			this._bitmapFont=UIPackage.getItemAssetByURL(this._font);
+		else
+		this._bitmapFont=null;
+		if(this._bitmapFont!=null){
 			this.textField["setChanged"]();
 		}
 		else {
-			this._bitmapFont=null;
 			if(this._font)
 				this.textField.font=this._font;
 			else
@@ -11650,12 +13016,23 @@ var GButton=(function(_super){
 
 	__class(GButton,'fairygui.GButton',_super);
 	var __proto=GButton.prototype;
+	__proto.getTextField=function(){
+		if ((this._titleObject instanceof fairygui.GTextField ))
+			return this._titleObject;
+		else if ((this._titleObject instanceof fairygui.GLabel ))
+		return (this._titleObject).getTextField();
+		else if ((this._titleObject instanceof fairygui.GButton ))
+		return (this._titleObject).getTextField();
+		else
+		return null;
+	}
+
 	__proto.fireClick=function(downEffect){
 		(downEffect===void 0)&& (downEffect=true);
 		if (downEffect && this._mode==0){
 			this.setState("over");
-			Laya.timer.once(100,this,this.setState,["down"]);
-			Laya.timer.once(200,this,this.setState,["up"]);
+			Laya.timer.once(100,this,this.setState,["down"],false);
+			Laya.timer.once(200,this,this.setState,["up"],false);
 		}
 		this.__click(Events.createEvent("click",this.displayObject));
 	}
@@ -11723,27 +13100,17 @@ var GButton=(function(_super){
 		_super.prototype.handleGrayedChanged.call(this);
 	}
 
-	__proto.constructFromXML=function(xml){
-		_super.prototype.constructFromXML.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"Button");
-		var str;
-		str=xml.getAttribute("mode");
-		if (str)
-			this._mode=ButtonMode.parse(str);
-		str=xml.getAttribute("sound");
+	__proto.constructExtension=function(buffer){
+		buffer.seek(0,6);
+		this._mode=buffer.readByte();
+		var str=buffer.readS();
 		if(str)
 			this._sound=str;
-		str=xml.getAttribute("volume");
-		if(str)
-			this._soundVolumeScale=parseInt(str)/ 100;
-		str=xml.getAttribute("downEffect");
-		if(str){
-			this._downEffect=str=="dark"?1:(str=="scale"?2:0);
-			str=xml.getAttribute("downEffectValue");
-			this._downEffectValue=parseFloat(str);
-			if(this._downEffect==2)
-				this.setPivot(0.5,0.5);
-		}
+		this._soundVolumeScale=buffer.getFloat32();
+		this._downEffect=buffer.readByte();
+		this._downEffectValue=buffer.getFloat32();
+		if(this._downEffect==2)
+			this.setPivot(0.5,0.5,this.pivotAsAnchor);
 		this._buttonController=this.getController("button");
 		this._titleObject=this.getChild("title");
 		this._iconObject=this.getChild("icon");
@@ -11759,43 +13126,41 @@ var GButton=(function(_super){
 		this.on("click",this,this.__click);
 	}
 
-	__proto.setup_afterAdd=function(xml){
-		_super.prototype.setup_afterAdd.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"Button");
-		if (xml){
-			var str;
-			str=xml.getAttribute("title");
-			if (str)
-				this.title=str;
-			str=xml.getAttribute("icon");
-			if (str)
-				this.icon=str;
-			str=xml.getAttribute("selectedTitle");
-			if (str)
-				this.selectedTitle=str;
-			str=xml.getAttribute("selectedIcon");
-			if (str)
-				this.selectedIcon=str;
-			str=xml.getAttribute("titleColor");
-			if (str)
-				this.titleColor=str;
-			str=xml.getAttribute("titleFontSize");
-			if(str)
-				this.titleFontSize=parseInt(str);
-			str=xml.getAttribute("sound");
-			if (str!=null)
-				this._sound=str;
-			str=xml.getAttribute("volume");
-			if(str)
-				this._soundVolumeScale=parseInt(str)/100;
-			str=xml.getAttribute("controller");
-			if (str)
-				this._relatedController=this._parent.getController(str);
-			else
-			this._relatedController=null;
-			this._pageOption.id=xml.getAttribute("page");
-			this.selected=xml.getAttribute("checked")=="true";
-		}
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		_super.prototype.setup_afterAdd.call(this,buffer,beginPos);
+		if (!buffer.seek(beginPos,6))
+			return;
+		if (buffer.readByte()!=this.packageItem.objectType)
+			return;
+		var str;
+		var iv=0;
+		str=buffer.readS();
+		if (str !=null)
+			this.title=str;
+		str=buffer.readS();
+		if (str !=null)
+			this.selectedTitle=str;
+		str=buffer.readS();
+		if (str !=null)
+			this.icon=str;
+		str=buffer.readS();
+		if (str !=null)
+			this.selectedIcon=str;
+		if (buffer.readBool())
+			this.titleColor=buffer.readColorS();
+		iv=buffer.getInt32();
+		if (iv !=0)
+			this.titleFontSize=iv;
+		iv=buffer.getInt16();
+		if (iv >=0)
+			this._relatedController=this.parent.getControllerAt(iv);
+		this.pageOption.id=buffer.readS();
+		str=buffer.readS();
+		if (str !=null)
+			this._sound=str;
+		if (buffer.readBool())
+			this._soundVolumeScale=buffer.getFloat32();
+		this.selected=buffer.readBool();
 	}
 
 	__proto.__rollover=function(){
@@ -11857,7 +13222,7 @@ var GButton=(function(_super){
 		if(this._sound){
 			var pi=UIPackage.getItemByURL(this._sound);
 			if (pi)
-				GRoot.inst.playOneShotSound(pi.owner.getItemAssetURL(pi));
+				GRoot.inst.playOneShotSound(pi.file);
 			else
 			GRoot.inst.playOneShotSound(this._sound);
 		}
@@ -11900,21 +13265,15 @@ var GButton=(function(_super){
 	});
 
 	__getset(0,__proto,'titleFontSize',function(){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			return (this._titleObject).fontSize;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		return (this._titleObject).titleFontSize;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		return (this._titleObject).titleFontSize;
+		var tf=this.getTextField();
+		if(tf!=null)
+			return tf.fontSize;
 		else
 		return 0;
 		},function(value){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			(this._titleObject).fontSize=value;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		(this._titleObject).titleFontSize=value;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		(this._titleObject).titleFontSize=value;
+		var tf=this.getTextField();
+		if(tf!=null)
+			tf.fontSize=value;
 	});
 
 	__getset(0,__proto,'selectedIcon',function(){
@@ -11962,21 +13321,16 @@ var GButton=(function(_super){
 	});
 
 	__getset(0,__proto,'titleColor',function(){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			return (this._titleObject).color;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		return (this._titleObject).titleColor;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		return (this._titleObject).titleColor;
+		var tf=this.getTextField();
+		if(tf!=null)
+			return tf.color;
 		else
 		return "#000000";
 		},function(value){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			(this._titleObject).color=value;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		(this._titleObject).titleColor=value;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		(this._titleObject).titleColor=value;
+		var tf=this.getTextField();
+		if(tf!=null)
+			tf.color=value;
+		this.updateGear(4);
 	});
 
 	__getset(0,__proto,'selected',function(){
@@ -12010,7 +13364,7 @@ var GButton=(function(_super){
 			&& !this._parent._buildingDisplayList){
 				if(this._selected){
 					this._relatedController.selectedPageId=this._pageOption.id;
-					if(this._relatedController._autoRadioGroupDepth)
+					if(this._relatedController.autoRadioGroupDepth)
 						this._parent.adjustRadioGroupDepth(this,this._relatedController);
 				}
 				else if(this._mode==1 && this._relatedController.selectedPageId==this._pageOption.id)
@@ -12019,6 +13373,12 @@ var GButton=(function(_super){
 		}
 	});
 
+	/**
+	*@see ButtonMode
+	*/
+	/**
+	*@see ButtonMode
+	*/
 	__getset(0,__proto,'mode',function(){
 		return this._mode;
 		},function(value){
@@ -12065,7 +13425,7 @@ var GComboBox=(function(_super){
 		this._items=null;
 		this._icons=null;
 		this._values=null;
-		this._popupDownward=null;
+		this._popupDirection=0;
 		this._visibleItemCount=0;
 		this._itemsUpdated=false;
 		this._selectedIndex=0;
@@ -12083,6 +13443,17 @@ var GComboBox=(function(_super){
 
 	__class(GComboBox,'fairygui.GComboBox',_super);
 	var __proto=GComboBox.prototype;
+	__proto.getTextField=function(){
+		if ((this._titleObject instanceof fairygui.GTextField ))
+			return this._titleObject;
+		else if ((this._titleObject instanceof fairygui.GLabel ))
+		return (this._titleObject).getTextField();
+		else if ((this._titleObject instanceof fairygui.GButton ))
+		return (this._titleObject).getTextField();
+		else
+		return null;
+	}
+
 	__proto.setState=function(val){
 		if (this._buttonController)
 			this._buttonController.selectedPage=val;
@@ -12113,14 +13484,12 @@ var GComboBox=(function(_super){
 		_super.prototype.dispose.call(this);
 	}
 
-	__proto.constructFromXML=function(xml){
-		_super.prototype.constructFromXML.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"ComboBox");
+	__proto.constructExtension=function(buffer){
 		var str;
 		this._buttonController=this.getController("button");
 		this._titleObject=this.getChild("title");
 		this._iconObject=this.getChild("icon");
-		str=xml.getAttribute("dropdown");
+		str=buffer.readS();
 		if (str){
 			this.dropdown=(UIPackage.createObjectFromURL(str));
 			if (!this.dropdown){
@@ -12145,57 +13514,53 @@ var GComboBox=(function(_super){
 		this.on("mousedown",this,this.__mousedown);
 	}
 
-	__proto.setup_afterAdd=function(xml){
-		_super.prototype.setup_afterAdd.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"ComboBox");
-		if (xml){
-			var str;
-			str=xml.getAttribute("titleColor");
-			if (str)
-				this.titleColor=str;
-			str=xml.getAttribute("visibleItemCount");
-			if (str)
-				this._visibleItemCount=parseInt(str);
-			var col=xml.childNodes;
-			var length=col.length;
-			for (var i=0;i < length;i++){
-				var cxml=col[i];
-				if(cxml.nodeName=="item"){
-					this._items.push(cxml.getAttribute("title"));
-					this._values.push(cxml.getAttribute("value"));
-					str=cxml.getAttribute("icon");
-					if (str){
-						if(!this._icons)
-							this._icons=new Array(length);
-						this._icons[i]=str;
-					}
-				}
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		_super.prototype.setup_afterAdd.call(this,buffer,beginPos);
+		if (!buffer.seek(beginPos,6))
+			return;
+		if (buffer.readByte()!=this.packageItem.objectType)
+			return;
+		var i=0;
+		var iv=0;
+		var nextPos=0;
+		var str;
+		var itemCount=buffer.getInt16();
+		for (i=0;i < itemCount;i++){
+			nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			this._items[i]=buffer.readS();
+			this._values[i]=buffer.readS();
+			str=buffer.readS();
+			if (str !=null){
+				if (this._icons==null)
+					this._icons=[];
+				this._icons[i]=str;
 			}
-			str=xml.getAttribute("title");
-			if(str){
-				this.text=str;
-				this._selectedIndex=this._items.indexOf(str);
-			}
-			else if(this._items.length>0){
-				this._selectedIndex=0;
-				this.text=this._items[0];
-			}
-			else
-			this._selectedIndex=-1;
-			str=xml.getAttribute("icon");
-			if(str)
-				this.icon=str;
-			str=xml.getAttribute("direction");
-			if(str){
-				if(str=="up")
-					this._popupDownward=false;
-				else if(str=="auto")
-				this._popupDownward=null;
-			}
-			str=xml.getAttribute("selectionController");
-			if (str)
-				this._selectionController=this.parent.getController(str);
+			buffer.pos=nextPos;
 		}
+		str=buffer.readS();
+		if (str !=null){
+			this.text=str;
+			this._selectedIndex=this._items.indexOf(str);
+		}
+		else if (this._items.length > 0){
+			this._selectedIndex=0;
+			this.text=this._items[0];
+		}
+		else
+		this._selectedIndex=-1;
+		str=buffer.readS();
+		if (str !=null)
+			this.icon=str;
+		if (buffer.readBool())
+			this.titleColor=buffer.readColorS();
+		iv=buffer.getInt32();
+		if (iv > 0)
+			this._visibleItemCount=iv;
+		this._popupDirection=buffer.readByte();
+		iv=buffer.getInt16();
+		if (iv >=0)
+			this._selectionController=this.parent.getControllerAt(iv);
 	}
 
 	__proto.showDropdown=function(){
@@ -12213,7 +13578,12 @@ var GComboBox=(function(_super){
 		}
 		this._list.selectedIndex=-1;
 		this.dropdown.width=this.width;
-		this.root.togglePopup(this.dropdown,this,this._popupDownward);
+		var downward=null;
+		if (this._popupDirection==2)
+			downward=true;
+		else if (this._popupDirection==1)
+		downward=false;
+		this.root.togglePopup(this.dropdown,this,downward);
 		if (this.dropdown.parent)
 			this.setState("down");
 	}
@@ -12286,40 +13656,28 @@ var GComboBox=(function(_super){
 	});
 
 	__getset(0,__proto,'titleColor',function(){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			return (this._titleObject).color;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		return (this._titleObject).titleColor;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		return (this._titleObject).titleColor;
+		var tf=this.getTextField();
+		if(tf!=null)
+			return tf.color;
 		else
 		return "#000000";
 		},function(value){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			(this._titleObject).color=value;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		(this._titleObject).titleColor=value;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		(this._titleObject).titleColor=value;
+		var tf=this.getTextField();
+		if(tf!=null)
+			tf.color=value;
+		this.updateGear(4);
 	});
 
-	__getset(0,__proto,'selectedIndex',function(){
-		return this._selectedIndex;
-		},function(val){
-		if(this._selectedIndex==val)
-			return;
-		this._selectedIndex=val;
-		if(this._selectedIndex>=0 && this._selectedIndex<this._items.length){
-			this.text=this._items[this._selectedIndex];
-			if (this._icons !=null && this._selectedIndex < this._icons.length)
-				this.icon=this._icons[this._selectedIndex];
-		}
-		else{
-			this.text="";
-			if (this._icons !=null)
-				this.icon=null;
-		}
-		this.updateSelectionController();
+	__getset(0,__proto,'titleFontSize',function(){
+		var tf=this.getTextField();
+		if(tf!=null)
+			return tf.fontSize;
+		else
+		return 0;
+		},function(value){
+		var tf=this.getTextField();
+		if(tf!=null)
+			tf.fontSize=value;
 	});
 
 	__getset(0,__proto,'icon',function(){
@@ -12353,19 +13711,16 @@ var GComboBox=(function(_super){
 		this._visibleItemCount=value;
 	});
 
-	__getset(0,__proto,'popupDownward',function(){
-		return this._popupDownward;
+	/**
+	*@see PopupDirection
+	*/
+	/**
+	*@see PopupDirection
+	*/
+	__getset(0,__proto,'popupDirection',function(){
+		return this._popupDirection;
 		},function(value){
-		this._popupDownward=value;
-	});
-
-	__getset(0,__proto,'values',function(){
-		return this._values;
-		},function(value){
-		if (!value)
-			this._values.length=0;
-		else
-		this._values=value.concat();
+		this._popupDirection=value;
 	});
 
 	__getset(0,__proto,'items',function(){
@@ -12393,6 +13748,34 @@ var GComboBox=(function(_super){
 		this._itemsUpdated=true;
 	});
 
+	__getset(0,__proto,'values',function(){
+		return this._values;
+		},function(value){
+		if (!value)
+			this._values.length=0;
+		else
+		this._values=value.concat();
+	});
+
+	__getset(0,__proto,'selectedIndex',function(){
+		return this._selectedIndex;
+		},function(val){
+		if(this._selectedIndex==val)
+			return;
+		this._selectedIndex=val;
+		if(this._selectedIndex>=0 && this._selectedIndex<this._items.length){
+			this.text=this._items[this._selectedIndex];
+			if (this._icons !=null && this._selectedIndex < this._icons.length)
+				this.icon=this._icons[this._selectedIndex];
+		}
+		else{
+			this.text="";
+			if (this._icons !=null)
+				this.icon=null;
+		}
+		this.updateSelectionController();
+	});
+
 	__getset(0,__proto,'value',function(){
 		return this._values[this._selectedIndex];
 		},function(val){
@@ -12413,49 +13796,65 @@ var GLabel=(function(_super){
 
 	__class(GLabel,'fairygui.GLabel',_super);
 	var __proto=GLabel.prototype;
-	Laya.imps(__proto,{"fairygui.IColorGear":true})
-	__proto.constructFromXML=function(xml){
-		_super.prototype.constructFromXML.call(this,xml);
+	Laya.imps(__proto,{"fairygui.gears.IColorGear":true})
+	__proto.getTextField=function(){
+		if ((this._titleObject instanceof fairygui.GTextField ))
+			return this._titleObject;
+		else if ((this._titleObject instanceof fairygui.GLabel ))
+		return (this._titleObject).getTextField();
+		else if ((this._titleObject instanceof fairygui.GButton ))
+		return (this._titleObject).getTextField();
+		else
+		return null;
+	}
+
+	__proto.constructExtension=function(buffer){
 		this._titleObject=this.getChild("title");
 		this._iconObject=this.getChild("icon");
 	}
 
-	__proto.setup_afterAdd=function(xml){
-		_super.prototype.setup_afterAdd.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"Label");
-		if (xml){
-			var str;
-			str=xml.getAttribute("title");
-			if(str)
-				this.text=str;
-			str=xml.getAttribute("icon");
-			if(str)
-				this.icon=str;
-			str=xml.getAttribute("titleColor");
-			if (str)
-				this.titleColor=str;
-			str=xml.getAttribute("titleFontSize");
-			if(str)
-				this.titleFontSize=parseInt(str);
-			if((this._titleObject instanceof fairygui.GTextInput )){
-				str=xml.getAttribute("prompt");
-				if(str)
-					(this._titleObject).promptText=str;
-				str=xml.getAttribute("maxLength");
-				if(str)
-					(this._titleObject).maxLength=parseInt(str);
-				str=xml.getAttribute("restrict");
-				if(str)
-					(this._titleObject).restrict=str;
-				str=xml.getAttribute("password");
-				if(str)
-					(this._titleObject).password=str=="true";
-				str=xml.getAttribute("keyboardType");
-				if(str=="4")
-					(this._titleObject).keyboardType="number";
-				else if(str=="3")
-				(this._titleObject).keyboardType="url";
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		_super.prototype.setup_afterAdd.call(this,buffer,beginPos);
+		if (!buffer.seek(beginPos,6))
+			return;
+		if (buffer.readByte()!=this.packageItem.objectType)
+			return;
+		var str;
+		str=buffer.readS();
+		if (str !=null)
+			this.title=str;
+		str=buffer.readS();
+		if (str !=null)
+			this.icon=str;
+		if (buffer.readBool())
+			this.titleColor=buffer.readColorS();
+		var iv=buffer.getInt32();
+		if (iv !=0)
+			this.titleFontSize=iv;
+		if (buffer.readBool()){
+			var input=this.getTextField();
+			if (input !=null){
+				str=buffer.readS();
+				if (str !=null)
+					input.promptText=str;
+				str=buffer.readS();
+				if (str !=null)
+					input.restrict=str;
+				iv=buffer.getInt32();
+				if (iv !=0)
+					input.maxLength=iv;
+				iv=buffer.getInt32();
+				if (iv !=0){
+					if(iv==4)
+						input.keyboardType="number";
+					else if(iv==3)
+					input.keyboardType="url";
+				}
+				if (buffer.readBool())
+					input.password=true;
 			}
+			else
+			buffer.skip(13);
 		}
 	}
 
@@ -12504,40 +13903,28 @@ var GLabel=(function(_super){
 	});
 
 	__getset(0,__proto,'titleColor',function(){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			return (this._titleObject).color;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		return (this._titleObject).titleColor;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		return (this._titleObject).titleColor;
+		var tf=this.getTextField();
+		if(tf!=null)
+			return tf.color;
 		else
 		return "#000000";
 		},function(value){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			(this._titleObject).color=value;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		(this._titleObject).titleColor=value;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		(this._titleObject).titleColor=value;
+		var tf=this.getTextField();
+		if(tf!=null)
+			tf.color=value;
 		this.updateGear(4);
 	});
 
 	__getset(0,__proto,'titleFontSize',function(){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			return (this._titleObject).fontSize;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		return (this._titleObject).titleFontSize;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		return (this._titleObject).titleFontSize;
+		var tf=this.getTextField();
+		if(tf!=null)
+			return tf.fontSize;
 		else
 		return 0;
 		},function(value){
-		if((this._titleObject instanceof fairygui.GTextField ))
-			(this._titleObject).fontSize=value;
-		else if((this._titleObject instanceof fairygui.GLabel ))
-		(this._titleObject).titleFontSize=value;
-		else if((this._titleObject instanceof fairygui.GButton ))
-		(this._titleObject).titleFontSize=value;
+		var tf=this.getTextField();
+		if(tf!=null)
+			tf.fontSize=value;
 	});
 
 	return GLabel;
@@ -13264,12 +14651,13 @@ var GList=(function(_super){
 		this._setVirtual(false);
 	}
 
-	/// </summary>
+	/**
+	*Set the list to be virtual list,and has loop behavior.
+	*/
 	__proto.setVirtualAndLoop=function(){
 		this._setVirtual(true);
 	}
 
-	/// </summary>
 	__proto._setVirtual=function(loop){
 		if(!this._virtual){
 			if(this._scrollPane==null)
@@ -14207,6 +15595,12 @@ var GList=(function(_super){
 					child=this.getChildAt(i);
 					if (this.foldInvisibleItems && !child.visible)
 						continue ;
+					if (j==0 && (this._lineCount !=0 && k >=this._lineCount
+						|| this._lineCount==0 && curY+child.height > viewHeight)){
+						page++;
+						curY=0;
+						k=0;
+					}
 					lineSize+=child.sourceWidth;
 					j++;
 					if (j==this._columnCount || i==cnt-1){
@@ -14234,12 +15628,6 @@ var GList=(function(_super){
 						lineStart=i+1;
 						lineSize=0;
 						k++;
-						if (this._lineCount !=0 && k >=this._lineCount
-							|| this._lineCount==0 && curY+child.height > viewHeight){
-							page++;
-							curY=0;
-							k=0;
-						}
 					}
 				}
 			}
@@ -14282,146 +15670,106 @@ var GList=(function(_super){
 		this.setBounds(0,0,cw,ch);
 	}
 
-	__proto.setup_beforeAdd=function(xml){
-		fairygui.GObject.prototype.setup_beforeAdd.call(this,xml);
+	__proto.setup_beforeAdd=function(buffer,beginPos){
+		fairygui.GObject.prototype.setup_beforeAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,5);
+		var i=0;
+		var j=0;
+		var cnt=0;
+		var i1=0;
+		var i2=0;
+		var nextPos=0;
 		var str;
-		var arr;
-		str=xml.getAttribute("layout");
-		if (str)
-			this._layout=ListLayoutType.parse(str);
-		var overflow=0;
-		str=xml.getAttribute("overflow");
-		if (str)
-			overflow=OverflowType.parse(str);
-		else
-		overflow=0;
-		str=xml.getAttribute("margin");
-		if(str)
-			this._margin.parse(str);
-		str=xml.getAttribute("align");
-		if(str)
-			this._align=str;
-		str=xml.getAttribute("vAlign");
-		if(str)
-			this._verticalAlign=str;
-		if(overflow==2){
-			var scroll=0;
-			str=xml.getAttribute("scroll");
-			if (str)
-				scroll=ScrollType.parse(str);
-			else
-			scroll=1;
-			var scrollBarDisplay=0;
-			str=xml.getAttribute("scrollBar");
-			if (str)
-				scrollBarDisplay=ScrollBarDisplayType.parse(str);
-			else
-			scrollBarDisplay=0;
-			var scrollBarFlags=NaN;
-			str=xml.getAttribute("scrollBarFlags");
-			if(str)
-				scrollBarFlags=parseInt(str);
-			else
-			scrollBarFlags=0;
-			var scrollBarMargin=new Margin();
-			str=xml.getAttribute("scrollBarMargin");
-			if(str)
-				scrollBarMargin.parse(str);
-			var vtScrollBarRes;
-			var hzScrollBarRes;
-			str=xml.getAttribute("scrollBarRes");
-			if(str){
-				arr=str.split(",");
-				vtScrollBarRes=arr[0];
-				hzScrollBarRes=arr[1];
-			};
-			var headerRes;
-			var footerRes;
-			str=xml.getAttribute('ptrRes');
-			if(str){
-				arr=str.split(",");
-				headerRes=arr[0];
-				footerRes=arr[1];
-			}
-			this.setupScroll(scrollBarMargin,scroll,scrollBarDisplay,scrollBarFlags,
-			vtScrollBarRes,hzScrollBarRes,headerRes,footerRes);
+		this._layout=buffer.readByte();
+		this._selectionMode=buffer.readByte();
+		i1=buffer.readByte();
+		this._align=i1==0?"left":(i1==1?"center":"right");
+		i1=buffer.readByte();
+		this._verticalAlign=i1==0?"top":(i1==1?"middle":"bottom");
+		this._lineGap=buffer.getInt16();
+		this._columnGap=buffer.getInt16();
+		this._lineCount=buffer.getInt16();
+		this._columnCount=buffer.getInt16();
+		this._autoResizeItem=buffer.readBool();
+		this._childrenRenderOrder=buffer.readByte();
+		this._apexIndex=buffer.getInt16();
+		if (buffer.readBool()){
+			this._margin.top=buffer.getInt32();
+			this._margin.bottom=buffer.getInt32();
+			this._margin.left=buffer.getInt32();
+			this._margin.right=buffer.getInt32();
+		};
+		var overflow=buffer.readByte();
+		if (overflow==2){
+			var savedPos=buffer.pos;
+			buffer.seek(beginPos,7);
+			this.setupScroll(buffer);
+			buffer.pos=savedPos;
 		}
 		else
 		this.setupOverflow(overflow);
-		str=xml.getAttribute("lineGap");
-		if (str)
-			this._lineGap=parseInt(str);
-		str=xml.getAttribute("colGap");
-		if (str)
-			this._columnGap=parseInt(str);
-		str=xml.getAttribute("lineItemCount");
-		if(str){
-			if (this._layout==2 || this._layout==4)
-				this._columnCount=parseInt(str);
-			else if (this._layout==3)
-			this._lineCount=parseInt(str);
-		}
-		str=xml.getAttribute("lineItemCount2");
-		if(str)
-			this._lineCount=parseInt(str);
-		str=xml.getAttribute("selectionMode");
-		if (str)
-			this._selectionMode=ListSelectionMode.parse(str);
-		str=xml.getAttribute("defaultItem");
-		if (str)
-			this._defaultItem=str;
-		str=xml.getAttribute("autoItemSize");
-		if (this._layout==1 || this._layout==0)
-			this._autoResizeItem=str!="false";
-		else
-		this._autoResizeItem=str=="true";
-		str=xml.getAttribute("renderOrder");
-		if(str){
-			this._childrenRenderOrder=ChildrenRenderOrder.parse(str);
-			if(this._childrenRenderOrder==2){
-				str=xml.getAttribute("apex");
-				if(str)
-					this._apexIndex=parseInt(str);
-			}
-		};
-		var col=xml.childNodes;
-		var length=col.length;
-		for (var i=0;i < length;i++){
-			var cxml=col[i];
-			if(cxml.nodeName !="item")
-				continue ;
-			var url=cxml.getAttribute("url");
-			if (!url)
-				url=this._defaultItem;
-			if (!url)
-				continue ;
-			var obj=this.getFromPool(url);
-			if(obj !=null){
+		if (buffer.readBool())
+			buffer.skip(8);
+		buffer.seek(beginPos,8);
+		this._defaultItem=buffer.readS();
+		var itemCount=buffer.getInt16();
+		for (i=0;i < itemCount;i++){
+			nextPos=buffer.getInt16();
+			nextPos+=buffer.pos;
+			str=buffer.readS();
+			if (str==null){
+				str=this.defaultItem;
+				if (!str){
+					buffer.pos=nextPos;
+					continue ;
+				}
+			};
+			var obj=this.getFromPool(str);
+			if (obj !=null){
 				this.addChild(obj);
-				str=cxml.getAttribute("title");
-				if(str)
+				str=buffer.readS();
+				if (str !=null)
 					obj.text=str;
-				str=cxml.getAttribute("icon");
-				if(str)
+				str=buffer.readS();
+				if (str !=null && ((obj instanceof fairygui.GButton )))
+					(obj).selectedTitle=str;
+				str=buffer.readS();
+				if (str !=null)
 					obj.icon=str;
-				str=cxml.getAttribute("name");
-				if(str)
-					obj.name=str;
-				str=cxml.getAttribute("selectedIcon");
-				if(str && ((obj instanceof fairygui.GButton )))
+				str=buffer.readS();
+				if (str !=null && ((obj instanceof fairygui.GButton )))
 					(obj).selectedIcon=str;
+				str=buffer.readS();
+				if (str !=null)
+					obj.name=str;
+				if ((obj instanceof fairygui.GComponent )){
+					cnt=buffer.getInt16();
+					for (j=0;j < cnt;j++){
+						var cc=(obj).getController(buffer.readS());
+						str=buffer.readS();
+						if (cc !=null)
+							cc.selectedPageId=str;
+					}
+				}
 			}
+			buffer.pos=nextPos;
 		}
 	}
 
-	__proto.setup_afterAdd=function(xml){
-		_super.prototype.setup_afterAdd.call(this,xml);
-		var str;
-		str=xml.getAttribute("selectionController");
-		if(str)
-			this._selectionController=this.parent.getController(str);
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		_super.prototype.setup_afterAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,6);
+		var i=buffer.getInt16();
+		if (i !=-1)
+			this._selectionController=this.parent.getControllerAt(i);
 	}
 
+	/**
+	*@see ListLayoutType
+	*/
+	/**
+	*@see ListLayoutType
+	*/
 	__getset(0,__proto,'layout',function(){
 		return this._layout;
 		},function(value){
@@ -14531,6 +15879,12 @@ var GList=(function(_super){
 		}
 	});
 
+	/**
+	*@see ListSelectionMode
+	*/
+	/**
+	*@see ListSelectionMode
+	*/
 	__getset(0,__proto,'selectionMode',function(){
 		return this._selectionMode;
 		},function(value){
@@ -14580,7 +15934,11 @@ var GList=(function(_super){
 		this.clearSelection();
 	});
 
-	/// </summary>
+	/**
+	*Set the list item count.
+	*If the list is not virtual,specified Number of items will be created.
+	*If the list is virtual,only items in view will be created.
+	*/
 	__getset(0,__proto,'numItems',function(){
 		if(this._virtual)
 			return this._numItems;
@@ -14657,7 +16015,6 @@ var GList=(function(_super){
 var GRichTextField=(function(_super){
 	function GRichTextField(){
 		this.div=null;
-		this._text=null;
 		this._ubbEnabled=false;
 		this._color=null;
 		GRichTextField.__super.call(this);
@@ -14692,10 +16049,13 @@ var GRichTextField=(function(_super){
 		return this._text;
 		},function(value){
 		this._text=value;
+		var text2=this._text;
+		if (this._templateVars !=null)
+			text2=this.parseTemplate(text2);
 		if(this._ubbEnabled)
-			this.div.innerHTML=ToolSet.parseUBB(this._text);
+			this.div.innerHTML=ToolSet.parseUBB(text2);
 		else
-		this.div.innerHTML=this._text;
+		this.div.innerHTML=text2;
 	});
 
 	__getset(0,__proto,'color',function(){
@@ -14779,8 +16139,7 @@ var GProgressBar=(function(_super){
 		this._barMaxHeightDelta=0;
 		this._barStartX=0;
 		this._barStartY=0;
-		this._tweener=null;
-		this._tweenValue=0;
+		this._tweening=false;
 		GProgressBar.__super.call(this);
 		this._titleType=0;
 		this._value=50;
@@ -14790,30 +16149,24 @@ var GProgressBar=(function(_super){
 	__class(GProgressBar,'fairygui.GProgressBar',_super);
 	var __proto=GProgressBar.prototype;
 	__proto.tweenValue=function(value,duration){
+		var _$this=this;
 		if(this._value !=value){
-			if(this._tweener)
-				this._tweener.clear();
-			this._tweenValue=this._value;
+			if(this._tweening){
+				GTween.kill(this,false,this.update);
+				this._tweening=false;
+			};
+			var oldValule=this._value;
 			this._value=value;
-			this._tweener=Tween.to(this,{_tweenValue:value },duration *1000,fairygui.GProgressBar.easeLinear,
-			Handler.create(this,this.onTweenComplete,null,true));
-			this._tweener.update=Handler.create(this,this.onUpdateTween,null,false);
-			return this._tweener;
+			this._tweening=true;
+			return GTween.to(oldValule,this._value,duration).setTarget(this,this.update).setEase(0)
+			.onComplete(function(){_$this._tweening=false;},this);
 		}
 		else
 		return null;
 	}
 
-	__proto.onUpdateTween=function(){
-		this.update(this._tweenValue);
-	}
-
-	__proto.onTweenComplete=function(){
-		this._tweener=null;
-	}
-
 	__proto.update=function(newValue){
-		var percent=Math.min(newValue / this._max,1);
+		var percent=this._max!=0?Math.min(newValue / this._max,1):0;
 		if(this._titleObject){
 			switch(this._titleType){
 				case 0:
@@ -14833,33 +16186,45 @@ var GProgressBar=(function(_super){
 		var fullWidth=this.width-this._barMaxWidthDelta;
 		var fullHeight=this.height-this._barMaxHeightDelta;
 		if(!this._reverse){
-			if(this._barObjectH)
+			if(this._barObjectH){
+				if (((this._barObjectH instanceof fairygui.GImage ))&& (this._barObjectH).fillMethod !=0)
+					(this._barObjectH).fillAmount=percent;
+				else
 				this._barObjectH.width=Math.round(fullWidth *percent);
-			if(this._barObjectV)
+			}
+			if(this._barObjectV){
+				if (((this._barObjectV instanceof fairygui.GImage ))&& (this._barObjectV).fillMethod !=0)
+					(this._barObjectV).fillAmount=percent;
+				else
 				this._barObjectV.height=Math.round(fullHeight *percent);
+			}
 		}
 		else {
 			if(this._barObjectH){
-				this._barObjectH.width=Math.round(fullWidth *percent);
-				this._barObjectH.x=this._barStartX+(fullWidth-this._barObjectH.width);
+				if (((this._barObjectH instanceof fairygui.GImage ))&& (this._barObjectH).fillMethod !=0)
+					(this._barObjectH).fillAmount=1-percent;
+				else{
+					this._barObjectH.width=Math.round(fullWidth *percent);
+					this._barObjectH.x=this._barStartX+(fullWidth-this._barObjectH.width);
+				}
 			}
 			if(this._barObjectV){
-				this._barObjectV.height=Math.round(fullHeight *percent);
-				this._barObjectV.y=this._barStartY+(fullHeight-this._barObjectV.height);
+				if (((this._barObjectV instanceof fairygui.GImage ))&& (this._barObjectV).fillMethod !=0)
+					(this._barObjectV).fillAmount=1-percent;
+				else{
+					this._barObjectV.height=Math.round(fullHeight *percent);
+					this._barObjectV.y=this._barStartY+(fullHeight-this._barObjectV.height);
+				}
 			}
 		}
 		if((this._aniObject instanceof fairygui.GMovieClip ))
 			(this._aniObject).frame=Math.round(percent *100);
 	}
 
-	__proto.constructFromXML=function(xml){
-		_super.prototype.constructFromXML.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"ProgressBar");
-		var str;
-		str=xml.getAttribute("titleType");
-		if(str)
-			this._titleType=ProgressTitleType.parse(str);
-		this._reverse=xml.getAttribute("reverse")=="true";
+	__proto.constructExtension=function(buffer){
+		buffer.seek(0,6);
+		this._titleType=buffer.readByte();
+		this._reverse=buffer.readBool();
 		this._titleObject=(this.getChild("title"));
 		this._barObjectH=this.getChild("bar");
 		this._barObjectV=this.getChild("bar_v");
@@ -14886,19 +16251,24 @@ var GProgressBar=(function(_super){
 			this.update(this._value);
 	}
 
-	__proto.setup_afterAdd=function(xml){
-		_super.prototype.setup_afterAdd.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"ProgressBar");
-		if (xml){
-			this._value=parseInt(xml.getAttribute("value"));
-			this._max=parseInt(xml.getAttribute("max"));
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		_super.prototype.setup_afterAdd.call(this,buffer,beginPos);
+		if (!buffer.seek(beginPos,6)){
+			this.update(this._value);
+			return;
 		}
+		if (buffer.readByte()!=this.packageItem.objectType){
+			this.update(this._value);
+			return;
+		}
+		this._value=buffer.getInt32();
+		this._max=buffer.getInt32();
 		this.update(this._value);
 	}
 
 	__proto.dispose=function(){
-		if(this._tweener)
-			this._tweener.clear();
+		if(this._tweening)
+			GTween.kill(this);
 		_super.prototype.dispose.call(this);
 	}
 
@@ -14911,6 +16281,12 @@ var GProgressBar=(function(_super){
 		}
 	});
 
+	/**
+	*@see ProgressTitleType
+	*/
+	/**
+	*@see ProgressTitleType
+	*/
 	__getset(0,__proto,'titleType',function(){
 		return this._titleType;
 		},function(value){
@@ -14923,9 +16299,9 @@ var GProgressBar=(function(_super){
 	__getset(0,__proto,'value',function(){
 		return this._value;
 		},function(value){
-		if(this._tweener !=null){
-			this._tweener.clear();
-			this._tweener=null;
+		if(this._tweening){
+			GTween.kill(this,true,this.update);
+			this._tweening=false;
 		}
 		if(this._value !=value){
 			this._value=value;
@@ -14933,9 +16309,6 @@ var GProgressBar=(function(_super){
 		}
 	});
 
-	__static(GProgressBar,
-	['easeLinear',function(){return this.easeLinear=Ease.linearNone;}
-	]);
 	return GProgressBar;
 })(GComponent)
 
@@ -15351,26 +16724,27 @@ var GTextInput=(function(_super){
 		this.input.size(this.width,this.height);
 	}
 
-	__proto.setup_beforeAdd=function(xml){
-		_super.prototype.setup_beforeAdd.call(this,xml);
-		var str=xml.getAttribute("prompt");
-		if(str)
+	__proto.setup_beforeAdd=function(buffer,beginPos){
+		_super.prototype.setup_beforeAdd.call(this,buffer,beginPos);
+		buffer.seek(beginPos,4);
+		var str=buffer.readS();
+		if (str !=null)
 			this.promptText=str;
-		str=xml.getAttribute("maxLength");
-		if(str)
-			this.input.maxChars=parseInt(str);
-		str=xml.getAttribute("restrict");
-		if(str)
+		str=buffer.readS();
+		if (str !=null)
 			this.input.restrict=str;
-		if(xml.getAttribute("password")=="true")
-			this.password=true;
-		else{
-			str=xml.getAttribute("keyboardType");
-			if(str=="4")
+		var iv=buffer.getInt32();
+		if (iv !=0)
+			this.input.maxChars=iv;
+		iv=buffer.getInt32();
+		if (iv !=0){
+			if(iv==4)
 				this.keyboardType="number";
-			else if(str=="3")
+			else if(iv==3)
 			this.keyboardType="url";
 		}
+		if (buffer.readBool())
+			this.password=true;
 	}
 
 	__getset(0,__proto,'bold',function(){
@@ -15517,12 +16891,9 @@ var GScrollBar=(function(_super){
 		this._vertical=vertical;
 	}
 
-	__proto.constructFromXML=function(xml){
-		_super.prototype.constructFromXML.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"ScrollBar");
-		if (xml){
-			this._fixedGripSize=xml.getAttribute("fixedGripSize")=="true";
-		}
+	__proto.constructExtension=function(buffer){
+		buffer.seek(0,6);
+		this._fixedGripSize=buffer.readBool();
 		this._grip=this.getChild("grip");
 		if(!this._grip){
 			Log.print("需要定义grip");
@@ -15713,14 +17084,10 @@ var GSlider=(function(_super){
 		}
 	}
 
-	__proto.constructFromXML=function(xml){
-		_super.prototype.constructFromXML.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"Slider");
-		var str;
-		str=xml.getAttribute("titleType");
-		if(str)
-			this._titleType=ProgressTitleType.parse(str);
-		this._reverse=xml.getAttribute("reverse")=="true";
+	__proto.constructExtension=function(buffer){
+		buffer.seek(0,6);
+		this._titleType=buffer.readByte();
+		this._reverse=buffer.readBool();
 		this._titleObject=(this.getChild("title"));
 		this._barObjectH=this.getChild("bar");
 		this._barObjectV=this.getChild("bar_v");
@@ -15751,13 +17118,18 @@ var GSlider=(function(_super){
 			this.update();
 	}
 
-	__proto.setup_afterAdd=function(xml){
-		_super.prototype.setup_afterAdd.call(this,xml);
-		xml=ToolSet.findChildNode(xml,"Slider");
-		if (xml){
-			this._value=parseInt(xml.getAttribute("value"));
-			this._max=parseInt(xml.getAttribute("max"));
+	__proto.setup_afterAdd=function(buffer,beginPos){
+		_super.prototype.setup_afterAdd.call(this,buffer,beginPos);
+		if (!buffer.seek(beginPos,6)){
+			this.update();
+			return;
 		}
+		if (buffer.readByte()!=this.packageItem.objectType){
+			this.update();
+			return;
+		}
+		this._value=buffer.getInt32();
+		this._max=buffer.getInt32();
 		this.update();
 	}
 
@@ -15838,6 +17210,12 @@ var GSlider=(function(_super){
 		}
 	});
 
+	/**
+	*@see ProgressTitleType
+	*/
+	/**
+	*@see ProgressTitleType
+	*/
 	__getset(0,__proto,'titleType',function(){
 		return this._titleType;
 		},function(value){
@@ -16134,13 +17512,16 @@ var Image$1=(function(_super){
 		this._scaleByTile=false;
 		this._scale9Grid=null;
 		this._tileGridIndice=0;
-		this._textureScaleX=0;
-		this._textureScaleY=0;
-		this._needRebuild=false;
-		Image.__super.call(this);
-		this.mouseEnabled=false;
 		this._textureScaleX=1;
 		this._textureScaleY=1;
+		this._needRebuild=0;
+		this._fillMethod=0;
+		this._fillOrigin=0;
+		this._fillAmount=0;
+		this._fillClockwise=false;
+		this._mask=null;
+		Image.__super.call(this);
+		this.mouseEnabled=false;
 	}
 
 	__class(Image,'fairygui.display.Image',_super,'Image$1');
@@ -16151,78 +17532,82 @@ var Image$1=(function(_super){
 			this._textureScaleY=sy;
 			if(this._tex)
 				this.size(this._tex.width*sx,this._tex.height*sy);
-			this.markChanged();
+			this.markChanged(1);
 		}
 	}
 
-	__proto.markChanged=function(){
+	__proto.markChanged=function(flag){
 		if(!this._needRebuild){
-			this._needRebuild=true;
+			this._needRebuild=flag;
 			Laya.timer.callLater(this,this.rebuild);
 		}
+		else
+		this._needRebuild |=flag;
 	}
 
 	__proto.rebuild=function(){
-		this._needRebuild=false;
+		if((this._needRebuild & 1)!=0)
+			this.doDraw();
+		if((this._needRebuild & 2)!=0 && this._fillMethod!=0)
+			this.doFill();
+		this._needRebuild=0;
+	}
+
+	__proto.doDraw=function(){
+		var w=this.width;
+		var h=this.height;
 		var g=this.graphics;
-		g.clear();
-		if(this._tex==null){
-			this.repaint();
-			return;
-		};
-		var width=this.width;
-		var height=this.height;
-		var sw=this._tex.width;
-		var sh=this._tex.height;
-		if(width==0 || height==0){
-			this.repaint();
-			return;
+		if(this._tex==null || w==0 || h==0){
+			g.clear();
 		}
-		if(this._scaleByTile){
-			g.fillTexture(this._tex,0,0,width,height);
+		else if(this._scaleByTile){
+			g.clear();
+			g.fillTexture(this._tex,0,0,w,h);
 		}
 		else if(this._scale9Grid!=null){
+			g.clear();
+			var tw=this._tex.width;
+			var th=this._tex.height;
 			var left=this._scale9Grid.x;
-			var right=Math.max(sw-this._scale9Grid.right,0);
+			var right=Math.max(tw-this._scale9Grid.right,0);
 			var top=this._scale9Grid.y;
-			var bottom=Math.max(sh-this._scale9Grid.bottom,0);
+			var bottom=Math.max(th-this._scale9Grid.bottom,0);
 			var tmp=NaN;
-			if (height >=(sh-this._scale9Grid.height)){
+			if (h >=(th-this._scale9Grid.height)){
 				top=this._scale9Grid.y;
-				bottom=sh-this._scale9Grid.bottom;
+				bottom=th-this._scale9Grid.bottom;
 			}
 			else{
-				tmp=this._scale9Grid.y / (sh-this._scale9Grid.bottom);
-				tmp=height *tmp / (1+tmp);
+				tmp=this._scale9Grid.y / (th-this._scale9Grid.bottom);
+				tmp=h *tmp / (1+tmp);
 				top=Math.round(tmp);
-				bottom=height-tmp;
+				bottom=h-tmp;
 			}
-			if (width >=(sw-this._scale9Grid.width)){
+			if (w >=(tw-this._scale9Grid.width)){
 				left=this._scale9Grid.x;
-				right=sw-this._scale9Grid.right;
+				right=tw-this._scale9Grid.right;
 			}
 			else{
-				tmp=this._scale9Grid.x / (sw-this._scale9Grid.right);
-				tmp=width *tmp / (1+tmp);
+				tmp=this._scale9Grid.x / (tw-this._scale9Grid.right);
+				tmp=w *tmp / (1+tmp);
 				left=Math.round(tmp);
-				right=width-tmp;
+				right=w-tmp;
 			};
-			var centerWidth=Math.max(width-left-right,0);
-			var centerHeight=Math.max(height-top-bottom,0);
+			var centerWidth=Math.max(w-left-right,0);
+			var centerHeight=Math.max(h-top-bottom,0);
 			left && top && g.drawTexture(fairygui.display.Image.getTexture(this._tex,0,0,left,top),0,0,left,top);
-			right && top && g.drawTexture(fairygui.display.Image.getTexture(this._tex,sw-right,0,right,top),width-right,0,right,top);
-			left && bottom && g.drawTexture(fairygui.display.Image.getTexture(this._tex,0,sh-bottom,left,bottom),0,height-bottom,left,bottom);
-			right && bottom && g.drawTexture(fairygui.display.Image.getTexture(this._tex,sw-right,sh-bottom,right,bottom),width-right,height-bottom,right,bottom);
-			centerWidth && top && this.drawTexture(0,fairygui.display.Image.getTexture(this._tex,left,0,sw-left-right,top),left,0,centerWidth,top);
-			centerWidth && bottom && this.drawTexture(1,fairygui.display.Image.getTexture(this._tex,left,sh-bottom,sw-left-right,bottom),left,height-bottom,centerWidth,bottom);
-			centerHeight && left && this.drawTexture(2,fairygui.display.Image.getTexture(this._tex,0,top,left,sh-top-bottom),0,top,left,centerHeight);
-			centerHeight && right && this.drawTexture(3,fairygui.display.Image.getTexture(this._tex,sw-right,top,right,sh-top-bottom),width-right,top,right,centerHeight);
-			centerWidth && centerHeight && this.drawTexture(4,fairygui.display.Image.getTexture(this._tex,left,top,sw-left-right,sh-top-bottom),left,top,centerWidth,centerHeight);
+			right && top && g.drawTexture(fairygui.display.Image.getTexture(this._tex,tw-right,0,right,top),w-right,0,right,top);
+			left && bottom && g.drawTexture(fairygui.display.Image.getTexture(this._tex,0,th-bottom,left,bottom),0,h-bottom,left,bottom);
+			right && bottom && g.drawTexture(fairygui.display.Image.getTexture(this._tex,tw-right,th-bottom,right,bottom),w-right,h-bottom,right,bottom);
+			centerWidth && top && this.drawTexture(0,fairygui.display.Image.getTexture(this._tex,left,0,tw-left-right,top),left,0,centerWidth,top);
+			centerWidth && bottom && this.drawTexture(1,fairygui.display.Image.getTexture(this._tex,left,th-bottom,tw-left-right,bottom),left,h-bottom,centerWidth,bottom);
+			centerHeight && left && this.drawTexture(2,fairygui.display.Image.getTexture(this._tex,0,top,left,th-top-bottom),0,top,left,centerHeight);
+			centerHeight && right && this.drawTexture(3,fairygui.display.Image.getTexture(this._tex,tw-right,top,right,th-top-bottom),w-right,top,right,centerHeight);
+			centerWidth && centerHeight && this.drawTexture(4,fairygui.display.Image.getTexture(this._tex,left,top,tw-left-right,th-top-bottom),left,top,centerWidth,centerHeight);
 		}
 		else {
-			g.drawTexture(this._tex,0,0,width,height);
+			g.cleanByTexture(this._tex,0,0,w,h);
 		}
-		this.repaint();
 	}
 
 	__proto.drawTexture=function(part,tex,x,y,width,height){
@@ -16234,6 +17619,27 @@ var Image$1=(function(_super){
 		this.graphics.fillTexture(tex,x,y,width,height);
 	}
 
+	__proto.doFill=function(){
+		var w=this.width;
+		var h=this.height;
+		var g=this._mask.graphics;
+		g.clear();
+		if(w==0 || h==0)
+			return;
+		var points=FillUtils.fill(w,h,this._fillMethod,this._fillOrigin,this._fillClockwise,this._fillAmount);
+		g.drawPoly(0,0,points,"#FFFFFF");
+	}
+
+	__getset(0,__proto,'fillClockwise',function(){
+		return this._fillClockwise;
+		},function(value){
+		if(this._fillClockwise!=value){
+			this._fillClockwise=value;
+			if(this._fillMethod!=0)
+				this.markChanged(2);
+		}
+	});
+
 	__getset(0,__proto,'tex',function(){
 		return this._tex;
 		},function(value){
@@ -16243,7 +17649,7 @@ var Image$1=(function(_super){
 				this.size(this._tex.width*this._textureScaleX,this._tex.height*this._textureScaleY);
 			else
 			this.size(0,0);
-			this.markChanged();
+			this.markChanged(1);
 		}
 	});
 
@@ -16251,7 +17657,17 @@ var Image$1=(function(_super){
 		return this._scale9Grid;
 		},function(value){
 		this._scale9Grid=value;
-		this.markChanged();
+		this.markChanged(1);
+	});
+
+	__getset(0,__proto,'fillAmount',function(){
+		return this._fillAmount;
+		},function(value){
+		if(this._fillAmount!=value){
+			this._fillAmount=value;
+			if(this._fillMethod!=0)
+				this.markChanged(2);
+		}
 	});
 
 	__getset(0,__proto,'scaleByTile',function(){
@@ -16259,7 +17675,7 @@ var Image$1=(function(_super){
 		},function(value){
 		if(this._scaleByTile!=value){
 			this._scaleByTile=value;
-			this.markChanged();
+			this.markChanged(1);
 		}
 	});
 
@@ -16268,25 +17684,53 @@ var Image$1=(function(_super){
 		},function(value){
 		if(this._tileGridIndice!=value){
 			this._tileGridIndice=value;
-			this.markChanged();
+			this.markChanged(1);
 		}
 	});
 
-	Image.getTexture=function(source,x,y,width,height){
-		source.$GID || (source.$GID=Utils.getGID());
-		var key=source.$GID+"."+x+"."+y+"."+width+"."+height;
-		var texture=fairygui.display.Image._textureCache[key];
-		if (!texture){
-			texture=fairygui.display.Image._textureCache[key]=Texture.create(source,x,y,width,height);
+	__getset(0,__proto,'fillMethod',function(){
+		return this._fillMethod;
+		},function(value){
+		if(this._fillMethod!=value){
+			this._fillMethod=value;
+			if(this._fillMethod!=0){
+				if(!this._mask){
+					this._mask=new Sprite();
+					this._mask.mouseEnabled=false;
+				}
+				this.mask=this._mask;
+				this.markChanged(2);
+			}
+			else if(this.mask){
+				this._mask.graphics.clear();
+				this.mask=null;
+			}
+		}
+	});
+
+	__getset(0,__proto,'fillOrigin',function(){
+		return this._fillOrigin;
+		},function(value){
+		if(this._fillOrigin!=value){
+			this._fillOrigin=value;
+			if(this._fillMethod!=0)
+				this.markChanged(2);
+		}
+	});
+
+	Image.getTexture=function(tex,x,y,width,height){
+		if (width <=0)width=1;
+		if (height <=0)height=1;
+		tex.$_GID || (tex.$_GID=Utils.getGID())
+		var key=tex.$_GID+"."+x+"."+y+"."+width+"."+height;
+		var texture=WeakObject.I.get(key);
+		if (!texture||!texture.source){
+			texture=Texture.createFromTexture(tex,x,y,width,height);
+			WeakObject.I.set(key,texture);
 		}
 		return texture;
 	}
 
-	Image.clearCache=function(){
-		fairygui.display.Image._textureCache={};
-	}
-
-	Image._textureCache={};
 	return Image;
 })(Sprite)
 
@@ -16297,13 +17741,13 @@ var MovieClip$1=(function(_super){
 		this.interval=0;
 		this.swing=false;
 		this.repeatDelay=0;
-		this.playState=null;
+		this.timeScale=1;
 		this._$3__texture=null;
 		this._needRebuild=false;
-		this._playing=false;
+		this._playing=true;
 		this._frameCount=0;
 		this._frames=null;
-		this._currentFrame=0;
+		this._frame=0;
 		this._boundsRect=null;
 		this._start=0;
 		this._end=0;
@@ -16312,9 +17756,11 @@ var MovieClip$1=(function(_super){
 		this._status=0;
 		//0-none,1-next loop,2-ending,3-ended
 		this._endHandler=null;
+		this._frameElapsed=0;
+		//当前帧延迟
+		this._reversed=false;
+		this._repeatedCount=0;
 		MovieClip.__super.call(this);
-		this.playState=new PlayState();
-		this._playing=true;
 		this.mouseEnabled=false;
 		this.setPlaySettings();
 		this.on("display",this,this.__addToStage);
@@ -16324,6 +17770,69 @@ var MovieClip$1=(function(_super){
 	__class(MovieClip,'fairygui.display.MovieClip',_super,'MovieClip$1');
 	var __proto=MovieClip.prototype;
 	//从start帧开始，播放到end帧（-1表示结尾），重复times次（0表示无限循环），循环结束后，停止在endAt帧（-1表示参数end）
+	__proto.rewind=function(){
+		this._frame=0;
+		this._frameElapsed=0;
+		this._reversed=false;
+		this._repeatedCount=0;
+		this.drawFrame();
+	}
+
+	__proto.syncStatus=function(anotherMc){
+		this._frame=anotherMc._frame;
+		this._frameElapsed=anotherMc._frameElapsed;
+		this._reversed=anotherMc._reversed;
+		this._repeatedCount=anotherMc._repeatedCount;
+		this.drawFrame();
+	}
+
+	__proto.advance=function(timeInMiniseconds){
+		var beginFrame=this._frame;
+		var beginReversed=this._reversed;
+		var backupTime=timeInMiniseconds;
+		while (true){
+			var tt=this.interval+this._frames[this._frame].addDelay;
+			if (this._frame==0 && this._repeatedCount > 0)
+				tt+=this.repeatDelay;
+			if (timeInMiniseconds < tt){
+				this._frameElapsed=0;
+				break ;
+			}
+			timeInMiniseconds-=tt;
+			if (this.swing){
+				if (this._reversed){
+					this._frame--;
+					if (this._frame <=0){
+						this._frame=0;
+						this._repeatedCount++;
+						this._reversed=!this._reversed;
+					}
+				}
+				else{
+					this._frame++;
+					if (this._frame > this._frameCount-1){
+						this._frame=Math.max(0,this._frameCount-2);
+						this._repeatedCount++;
+						this._reversed=!this._reversed;
+					}
+				}
+			}
+			else{
+				this._frame++;
+				if (this._frame > this._frameCount-1){
+					this._frame=0;
+					this._repeatedCount++;
+				}
+			}
+			if (this._frame==beginFrame && this._reversed==beginReversed){
+				var roundTime=backupTime-timeInMiniseconds;
+				timeInMiniseconds-=Math.floor(timeInMiniseconds / roundTime)*roundTime;
+			}
+		}
+		this.drawFrame();
+	}
+
+	//从start帧开始，播放到end帧（-1表示结尾），重复times次（0表示无限循环），循环结束后，停止在endAt帧（-1表示参数end）
 	__proto.setPlaySettings=function(start,end,times,endAt,endHandler){
 		(start===void 0)&& (start=0);
 		(end===void 0)&& (end=-1);
@@ -16331,67 +17840,113 @@ var MovieClip$1=(function(_super){
 		(endAt===void 0)&& (endAt=-1);
 		this._start=start;
 		this._end=end;
-		if(this._end==-1 || this._end > this._frameCount-1)
+		if(this._end==-1 || this._end>this._frameCount-1)
 			this._end=this._frameCount-1;
 		this._times=times;
 		this._endAt=endAt;
-		if(this._endAt==-1)
+		if (this._endAt==-1)
 			this._endAt=this._end;
 		this._status=0;
 		this._endHandler=endHandler;
-		this.currentFrame=start;
+		this.frame=start;
 	}
 
 	__proto.update=function(){
-		if (this._playing && this._frameCount !=0 && this._status !=3){
-			this.playState.update(this);
-			if (this._currentFrame !=this.playState.currentFrame){
-				if (this._status==1){
-					this._currentFrame=this._start;
-					this.playState.currentFrame=this._currentFrame;
-					this._status=0;
+		if (!this._playing || this._frameCount==0 || this._status==3)
+			return;
+		var dt=Laya.timer.delta;
+		if(dt>100)
+			dt=100;
+		if(this.timeScale!=1)
+			dt *=this.timeScale;
+		this._frameElapsed+=dt;
+		var tt=this.interval+this._frames[this._frame].addDelay;
+		if (this._frame==0 && this._repeatedCount > 0)
+			tt+=this.repeatDelay;
+		if (this._frameElapsed < tt)
+			return;
+		this._frameElapsed-=tt;
+		if (this._frameElapsed > this.interval)
+			this._frameElapsed=this.interval;
+		if (this.swing){
+			if (this._reversed){
+				this._frame--;
+				if (this._frame <=0){
+					this._frame=0;
+					this._repeatedCount++;
+					this._reversed=!this._reversed;
 				}
-				else if (this._status==2){
-					this._currentFrame=this._endAt;
-					this.playState.currentFrame=this._currentFrame;
-					this._status=3;
-					if (this._endHandler !=null){
-						this._endHandler.run();
-					}
+			}
+			else{
+				this._frame++;
+				if (this._frame > this._frameCount-1){
+					this._frame=Math.max(0,this._frameCount-2);
+					this._repeatedCount++;
+					this._reversed=!this._reversed;
 				}
-				else {
-					this._currentFrame=this.playState.currentFrame;
-					if (this._currentFrame==this._end){
-						if (this._times > 0){
-							this._times--;
-							if (this._times==0)
-								this._status=2;
-							else
-							this._status=1;
-						}
-						else if(this._start!=0)
-						this._status=1;
-					}
-				}
-				this.setFrame(this._frames[this._currentFrame]);
 			}
 		}
+		else{
+			this._frame++;
+			if (this._frame > this._frameCount-1){
+				this._frame=0;
+				this._repeatedCount++;
+			}
+		}
+		if (this._status==1){
+			this._frame=this._start;
+			this._frameElapsed=0;
+			this._status=0;
+		}
+		else if (this._status==2){
+			this._frame=this._endAt;
+			this._frameElapsed=0;
+			this._status=3;
+			if(this._endHandler!=null){
+				var handler=this._endHandler;
+				this._endHandler=null;
+				handler.run();
+			}
+		}
+		else{
+			if (this._frame==this._end){
+				if (this._times > 0){
+					this._times--;
+					if (this._times==0)
+						this._status=2;
+					else
+					this._status=1;
+				}
+				else if (this._start !=0)
+				this._status=1;
+			}
+		}
+		this.drawFrame();
 	}
 
-	__proto.setFrame=function(frame){
+	__proto.drawFrame=function(){
+		if (this._frameCount>0 && this._frame < this._frames.length){
+			var frame=this._frames[this._frame];
+			this.graphics.cleanByTexture(frame.texture,frame.rect.x,frame.rect.y);
+		}
+		else
 		this.graphics.clear();
-		if (frame !=null)
-			this.graphics.drawTexture(frame.texture,frame.rect.x,frame.rect.y);
+	}
+
+	__proto.checkTimer=function(){
+		if (this._playing && this._frameCount>0 && this.stage!=null)
+			Laya.timer.frameLoop(1,this,this.update);
+		else
+		Laya.timer.clear(this,this.update);
 	}
 
 	__proto.__addToStage=function(){
-		if(this._playing)
+		if(this._playing && this._frameCount>0)
 			Laya.timer.frameLoop(1,this,this.update);
 	}
 
 	__proto.__removeFromStage=function(){
-		if(this._playing)
-			Laya.timer.clear(this,this.update);
+		Laya.timer.clear(this,this.update);
 	}
 
 	__getset(0,__proto,'frames',function(){
@@ -16406,28 +17961,38 @@ var MovieClip$1=(function(_super){
 			this._end=this._frameCount-1;
 		if(this._endAt==-1 || this._endAt > this._frameCount-1)
 			this._endAt=this._frameCount-1;
-		if(this._currentFrame < 0 || this._currentFrame > this._frameCount-1)
-			this._currentFrame=this._frameCount-1;
-		if(this._frameCount > 0)
-			this.setFrame(this._frames[this._currentFrame]);
-		else
-		this.setFrame(null);
-		this.playState.rewind();
+		if(this._frame < 0 || this._frame > this._frameCount-1)
+			this._frame=this._frameCount-1;
+		this.drawFrame();
+		this._frameElapsed=0;
+		this._repeatedCount=0;
+		this._reversed=false;
+		this.checkTimer();
 	});
 
 	__getset(0,__proto,'playing',function(){
 		return this._playing;
 		},function(value){
-		this._playing=value;
-		if(value && this.stage!=null){
-			Laya.timer.frameLoop(1,this,this.update);
-			}else {
-			Laya.timer.clear(this,this.update);
+		if(this._playing!=value){
+			this._playing=value;
+			this.checkTimer();
 		}
 	});
 
 	__getset(0,__proto,'frameCount',function(){
 		return this._frameCount;
+	});
+
+	__getset(0,__proto,'frame',function(){
+		return this._frame;
+		},function(value){
+		if (this._frame !=value){
+			if(this._frames!=null && value>=this._frameCount)
+				value=this._frameCount-1;
+			this._frame=value;
+			this._frameElapsed=0;
+			this.drawFrame();
+		}
 	});
 
 	__getset(0,__proto,'boundsRect',function(){
@@ -16436,21 +18001,11 @@ var MovieClip$1=(function(_super){
 		this._boundsRect=value;
 	});
 
-	__getset(0,__proto,'currentFrame',function(){
-		return this._currentFrame;
-		},function(value){
-		if (this._currentFrame !=value){
-			this._currentFrame=value;
-			this.playState.currentFrame=value;
-			this.setFrame(this._currentFrame < this._frameCount ? this._frames[this._currentFrame] :null);
-		}
-	});
-
 	return MovieClip;
 })(Sprite)
 
 
-	Laya.__init([GList,GearColor,GearAnimation,Transition,UIPackage,RelationItem,GBasicTextField,GearLook,GearSize]);
+	Laya.__init([GList,Transition,AsyncOperation,UIPackage,RelationItem,GBasicTextField,GearColor,EaseManager,GearAnimation,GearLook,GearSize]);
 })(window,document,Laya);
 
 if (typeof define === 'function' && define.amd){

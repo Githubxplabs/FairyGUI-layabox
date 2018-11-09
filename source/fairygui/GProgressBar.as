@@ -1,10 +1,9 @@
 package fairygui {
-	import fairygui.utils.ToolSet;
-	
-	import laya.utils.Ease;
-	import laya.utils.Handler;
-	import laya.utils.Tween;
-	
+	import fairygui.tween.EaseType;
+	import fairygui.tween.GTween;
+	import fairygui.tween.GTweener;
+	import fairygui.utils.ByteBuffer;
+
 	public class GProgressBar extends GComponent {
 		private var _max: Number = 0;
 		private var _value: Number = 0;
@@ -22,10 +21,7 @@ package fairygui {
 		private var _barStartX: Number = 0;
 		private var _barStartY: Number = 0;
 		
-		private var _tweener: Tween;
-		private var _tweenValue: Number = 0;
-		
-		private static var easeLinear: Function = Ease.linearNone;
+		private var _tweening:Boolean;
 		
 		public function GProgressBar() {
 			super();
@@ -35,10 +31,16 @@ package fairygui {
 			this._max = 100;
 		}
 		
+		/**
+		 * @see ProgressTitleType
+		 */
 		public function get titleType(): int {
 			return this._titleType;
 		}
 		
+		/**
+		 * @see ProgressTitleType
+		 */
 		public function set titleType(value: int):void {
 			if(this._titleType != value) {
 				this._titleType = value;
@@ -62,9 +64,10 @@ package fairygui {
 		}
 		
 		public function set value(value: Number):void {
-			if(this._tweener != null) {
-				this._tweener.clear();
-				this._tweener = null;
+			if(_tweening)
+			{
+				GTween.kill(this, true, this.update);
+				_tweening = false;
 			}
 			
 			if(this._value != value) {
@@ -73,33 +76,28 @@ package fairygui {
 			}
 		}
 		
-		public function tweenValue(value:Number, duration:Number):Tween
+		public function tweenValue(value:Number, duration:Number):GTweener
 		{
 			if(this._value != value) {
-				if(this._tweener)
-					this._tweener.clear();
+				if(_tweening)
+				{
+					GTween.kill(this, false, this.update);
+					_tweening = false;
+				}
 				
-				this._tweenValue = this._value;
-				this._value = value;
-				this._tweener = Tween.to(this, { _tweenValue: value }, duration * 1000, GProgressBar.easeLinear, 
-					Handler.create(this, this.onTweenComplete, null, true)); 
-				this._tweener.update = Handler.create(this, this.onUpdateTween, null, false);
-				return this._tweener;
+				var oldValule:Number = _value;
+				_value = value;
+				
+				_tweening = true;
+				return GTween.to(oldValule, _value, duration).setTarget(this, this.update).setEase(EaseType.Linear)
+					.onComplete(function():void { _tweening = false; }, this);
 			}
 			else
 				return null;
 		}
 		
-		private function onUpdateTween(): void {
-			this.update(this._tweenValue);
-		}
-		
-		private function onTweenComplete():void {
-			this._tweener = null;
-		}
-		
 		public function update(newValue:Number): void {
-			var percent: Number = Math.min(newValue / this._max,1);
+			var percent: Number = _max!=0?Math.min(newValue / this._max,1):0;
 			if(this._titleObject) {
 				switch(this._titleType) {
 					case ProgressTitleType.Percent:
@@ -124,36 +122,50 @@ package fairygui {
 			var fullHeight: Number = this.height - this._barMaxHeightDelta;
 			if(!this._reverse) {
 				if(this._barObjectH)
-					this._barObjectH.width = Math.round(fullWidth * percent);
+				{
+					if ((_barObjectH is GImage) && (_barObjectH as GImage).fillMethod != FillMethod.None)
+						(_barObjectH as GImage).fillAmount = percent;
+					else
+						this._barObjectH.width = Math.round(fullWidth * percent);
+				}
 				if(this._barObjectV)
-					this._barObjectV.height = Math.round(fullHeight * percent);
+				{
+					if ((_barObjectV is GImage) && (_barObjectV as GImage).fillMethod != FillMethod.None)
+						(_barObjectV  as GImage).fillAmount = percent;
+					else
+						this._barObjectV.height = Math.round(fullHeight * percent);
+				}
 			}
 			else {
 				if(this._barObjectH) {
-					this._barObjectH.width = Math.round(fullWidth * percent);
-					this._barObjectH.x = this._barStartX + (fullWidth - this._barObjectH.width);
+					if ((_barObjectH is GImage) && (_barObjectH as GImage).fillMethod != FillMethod.None)
+						(_barObjectH as GImage).fillAmount = 1 - percent;
+					else
+					{
+						this._barObjectH.width = Math.round(fullWidth * percent);
+						this._barObjectH.x = this._barStartX + (fullWidth - this._barObjectH.width);
+					}
 					
 				}
 				if(this._barObjectV) {
-					this._barObjectV.height = Math.round(fullHeight * percent);
-					this._barObjectV.y = this._barStartY + (fullHeight - this._barObjectV.height);
+					if ((_barObjectV is GImage) && (_barObjectV as GImage).fillMethod != FillMethod.None)
+						(_barObjectV as GImage).fillAmount = 1 - percent;
+					else
+					{
+						this._barObjectV.height = Math.round(fullHeight * percent);
+						this._barObjectV.y = this._barStartY + (fullHeight - this._barObjectV.height);
+					}
 				}
 			}
 			if(this._aniObject is GMovieClip)
 				GMovieClip(this._aniObject).frame = Math.round(percent * 100);
 		}
 		
-		override protected function constructFromXML(xml: Object): void {
-			super.constructFromXML(xml);
+		override protected function constructExtension(buffer:ByteBuffer): void {
+			buffer.seek(0, 6);
 			
-			xml = ToolSet.findChildNode(xml, "ProgressBar");
-			
-			var str: String;
-			str = xml.getAttribute("titleType");
-			if(str)
-				this._titleType = ProgressTitleType.parse(str);
-			
-			this._reverse = xml.getAttribute("reverse") == "true";
+			_titleType = buffer.readByte();
+			_reverse = buffer.readBool();
 			
 			this._titleObject = GTextField(this.getChild("title"));
 			this._barObjectH = this.getChild("bar");
@@ -183,20 +195,30 @@ package fairygui {
 				this.update(this._value);
 		}
 		
-		override public function setup_afterAdd(xml: Object): void {
-			super.setup_afterAdd(xml);
+		override public function setup_afterAdd(buffer:ByteBuffer, beginPos:int): void {
+			super.setup_afterAdd(buffer, beginPos);
 			
-			xml = ToolSet.findChildNode(xml, "ProgressBar");
-			if (xml) {
-				this._value = parseInt(xml.getAttribute("value"));
-				this._max = parseInt(xml.getAttribute("max"));
+			if (!buffer.seek(beginPos, 6))
+			{
+				update(_value);
+				return;
 			}
-			this.update(this._value);
+			
+			if (buffer.readByte() != packageItem.objectType)
+			{
+				update(_value);
+				return;
+			}
+			
+			_value = buffer.getInt32();
+			_max = buffer.getInt32();
+			
+			update(this._value);
 		}
 		
 		override public function dispose(): void {
-			if(this._tweener)
-				this._tweener.clear();
+			if(_tweening)
+				GTween.kill(this);
 			super.dispose();
 		}
 	}

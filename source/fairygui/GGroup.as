@@ -1,5 +1,6 @@
 package fairygui
 {
+	import fairygui.utils.ByteBuffer;
 	
 	
 	public class GGroup extends GObject
@@ -16,11 +17,17 @@ package fairygui
 		{
 		}
 		
+		/**
+		 * @see GroupLayout
+		 */
 		final public function get layout():int
 		{
 			return _layout;
 		}
 		
+		/**
+		 * @see GroupLayout
+		 */
 		final public function set layout(value:int):void
 		{
 			if(_layout != value)
@@ -93,8 +100,8 @@ package fairygui
 			var cnt:int = _parent.numChildren;
 			var i:int;
 			var child:GObject;
-			var ax:int=Number.MAX_VALUE, ay:int=Number.MAX_VALUE;
-			var ar:int = Number.MIN_VALUE, ab:int = Number.MIN_VALUE;
+			var ax:int=Number.POSITIVE_INFINITY, ay:int=Number.POSITIVE_INFINITY;
+			var ar:int = Number.NEGATIVE_INFINITY, ab:int = Number.NEGATIVE_INFINITY;
 			var tmp:int;
 			var empty:Boolean = true;
 			for(i=0;i<cnt;i++)
@@ -426,28 +433,20 @@ package fairygui
 			}
 		}
 		
-		override public function setup_beforeAdd(xml:Object):void
+		override public function setup_beforeAdd(buffer:ByteBuffer, beginPos:int):void
 		{
-			super.setup_beforeAdd(xml);
+			super.setup_beforeAdd(buffer, beginPos);
 			
-			var str:String;
+			buffer.seek(beginPos, 5);
 			
-			str = xml.getAttribute("layout");
-			if (str != null)
-			{
-				_layout = GroupLayoutType.parse(str);
-				str = xml.getAttribute("lineGap");
-				if(str)
-					_lineGap = parseInt(str);
-				str = xml.getAttribute("colGap");
-				if(str)
-					_columnGap = parseInt(str);
-			}
+			_layout = buffer.readByte();
+			_lineGap = buffer.getInt32();
+			_columnGap = buffer.getInt32();
 		}
 		
-		override public function setup_afterAdd(xml:Object):void
+		override public function setup_afterAdd(buffer:ByteBuffer, beginPos:int):void
 		{
-			super.setup_afterAdd(xml);
+			super.setup_afterAdd(buffer, beginPos);
 			
 			if(!this.visible)
 				handleVisibleChanged();

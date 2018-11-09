@@ -5,24 +5,26 @@ package fairygui.display {
 	import laya.maths.Rectangle;
 	import laya.resource.Texture;
 	import laya.utils.Utils;
+	import laya.utils.WeakObject;
 	
 	public class Image extends Sprite {
-		private var _tex:Texture;
-		private var _scaleByTile:Boolean;
-		private var _scale9Grid:Rectangle;
+		private var _tex:Texture = null;
+		private var _scaleByTile:Boolean = false;
+		private var _scale9Grid:Rectangle = null;
 		private var _tileGridIndice:int = 0;
-		private var _textureScaleX:Number = 0;
-		private var _textureScaleY:Number = 0;
-		private var _needRebuild:Boolean;
-		
-		private static var _textureCache:Object = {};
-		
+		private var _textureScaleX:Number = 1;
+		private var _textureScaleY:Number = 1;
+		private var _needRebuild:int = 0;
+		private var _fillMethod:int = 0;
+		private var _fillOrigin:int = 0;
+		private var _fillAmount:Number = 0;
+		private var _fillClockwise:Boolean = false;
+		private var _mask:Sprite = null;
+
 		public function Image() {
 			super();
 			
 			this.mouseEnabled = false;
-			this._textureScaleX = 1;
-			this._textureScaleY = 1;
 		}
 		
 		public function get tex(): Texture {
@@ -36,7 +38,7 @@ package fairygui.display {
 					this.size(this._tex.width* this._textureScaleX, this._tex.height* this._textureScaleY);
 				else
 					this.size(0,0);
-				this.markChanged();
+				this.markChanged(1);
 			}
 		}
 		
@@ -46,7 +48,7 @@ package fairygui.display {
 				this._textureScaleY = sy;
 				if(this._tex)
 					this.size(this._tex.width*sx, this._tex.height*sy);
-				this.markChanged();
+				this.markChanged(1);
 			}
 		}
 		
@@ -56,7 +58,7 @@ package fairygui.display {
 		
 		public function set scale9Grid(value:Rectangle):void {
 			this._scale9Grid = value;
-			this.markChanged();
+			this.markChanged(1);
 		}
 		
 		public function get scaleByTile(): Boolean {
@@ -66,7 +68,7 @@ package fairygui.display {
 		public function set scaleByTile(value:Boolean):void {
 			if(this._scaleByTile!=value) {
 				this._scaleByTile = value;
-				this.markChanged();
+				this.markChanged(1);
 			}
 		}
 		
@@ -77,97 +79,170 @@ package fairygui.display {
 		public function set tileGridIndice(value:int):void {
 			if(this._tileGridIndice!=value) {
 				this._tileGridIndice = value;
-				this.markChanged();
+				this.markChanged(1);
 			}
 		}
 		
-		private function markChanged():void {
+		public function get fillMethod():int
+		{
+			return _fillMethod;
+		}
+		
+		public function set fillMethod(value:int):void
+		{
+			if(_fillMethod!=value)
+			{
+				_fillMethod = value;
+				if(_fillMethod!=0)
+				{
+					if(!_mask)
+					{
+						_mask = new Sprite();
+						_mask.mouseEnabled = false;
+					}
+					this.mask = _mask;
+					markChanged(2);
+				}
+				else if(this.mask)
+				{
+					_mask.graphics.clear();
+					this.mask = null;
+				}
+			}
+		}
+		
+		public function get fillOrigin():int
+		{
+			return _fillOrigin;
+		}
+		
+		public function set fillOrigin(value:int):void
+		{
+			if(_fillOrigin!=value)
+			{
+				_fillOrigin = value;
+				if(_fillMethod!=0)
+					markChanged(2);
+			}
+		}
+		
+		public function get fillClockwise():Boolean
+		{
+			return _fillClockwise;
+		}
+		
+		public function set fillClockwise(value:Boolean):void
+		{
+			if(_fillClockwise!=value)
+			{
+				_fillClockwise = value;
+				if(_fillMethod!=0)
+					markChanged(2);
+			}
+		}
+		
+		public function get fillAmount():Number
+		{
+			return _fillAmount;
+		}
+		
+		public function set fillAmount(value:Number):void
+		{
+			if(_fillAmount!=value)
+			{
+				_fillAmount = value;
+				if(_fillMethod!=0)
+					markChanged(2);
+			}
+		}
+		
+		private function markChanged(flag:int):void {
 			if(!this._needRebuild) {
-				this._needRebuild = true;
+				this._needRebuild = flag;
 				
 				Laya.timer.callLater(this, this.rebuild);
 			}
+			else
+				this._needRebuild |= flag;
 		}
 		
 		private function rebuild():void {
-			this._needRebuild = false;
-			
+			if((this._needRebuild & 1)!=0)
+				doDraw();
+			if((this._needRebuild & 2)!=0 && _fillMethod!=0)
+				doFill();
+			this._needRebuild = 0;
+		}
+		
+		private function doDraw():void {
+			var w:Number=this.width;
+			var h:Number=this.height;
 			var g:Graphics  = this.graphics;
-			g.clear();
-			if(this._tex==null)
+			
+			if(this._tex==null || w==0 || h==0)
 			{
-				this.repaint();
-				return;
+				g.clear();
 			}
-			
-			var width:Number=this.width;
-			var height:Number=this.height;
-			var sw:Number=this._tex.width;
-			var sh:Number=this._tex.height;
-			
-			if(width==0 || height==0)
-			{
-				this.repaint();
-				return;
-			}
-			
-			if(this._scaleByTile) {
-				g.fillTexture(this._tex, 0, 0, width, height);
+			else if(this._scaleByTile) {
+				g.clear();
+				g.fillTexture(this._tex, 0, 0, w, h);
 			}
 			else if(this._scale9Grid!=null) {
+				g.clear();
+				
+				var tw:Number=this._tex.width;
+				var th:Number=this._tex.height;
 				var left:Number = this._scale9Grid.x;
-				var right:Number = Math.max(sw - this._scale9Grid.right, 0);
+				var right:Number = Math.max(tw - this._scale9Grid.right, 0);
 				var top:Number = this._scale9Grid.y;
-				var bottom:Number = Math.max(sh - this._scale9Grid.bottom, 0);
+				var bottom:Number = Math.max(th - this._scale9Grid.bottom, 0);
 				var tmp:Number;
 				
-				if (height >= (sh - this._scale9Grid.height))
+				if (h >= (th - this._scale9Grid.height))
 				{
 					top = this._scale9Grid.y;
-					bottom = sh - this._scale9Grid.bottom;
+					bottom = th - this._scale9Grid.bottom;
 				}
 				else
 				{
-					tmp = this._scale9Grid.y / (sh - this._scale9Grid.bottom);
-					tmp = height * tmp / (1 + tmp);
+					tmp = this._scale9Grid.y / (th - this._scale9Grid.bottom);
+					tmp = h * tmp / (1 + tmp);
 					top = Math.round(tmp);
-					bottom = height - tmp;
+					bottom = h - tmp;
 				}
 				
-				if (width >= (sw - this._scale9Grid.width))
+				if (w >= (tw - this._scale9Grid.width))
 				{
 					left = this._scale9Grid.x;
-					right = sw - this._scale9Grid.right;
+					right = tw - this._scale9Grid.right;
 				}
 				else
 				{
-					tmp = this._scale9Grid.x / (sw - this._scale9Grid.right);
-					tmp = width * tmp / (1 + tmp);
+					tmp = this._scale9Grid.x / (tw - this._scale9Grid.right);
+					tmp = w * tmp / (1 + tmp);
 					left = Math.round(tmp);
-					right = width - tmp;
+					right = w - tmp;
 				}
-				var centerWidth:Number = Math.max(width - left - right,0);
-				var centerHeight:Number = Math.max(height - top - bottom,0);
+				var centerWidth:Number = Math.max(w - left - right,0);
+				var centerHeight:Number = Math.max(h - top - bottom,0);
 				
 				//绘制四个角
 				left && top && g.drawTexture(Image.getTexture(this._tex, 0, 0, left, top), 0, 0, left, top);
-				right && top && g.drawTexture(Image.getTexture(this._tex, sw - right, 0, right, top), width - right, 0, right, top);
-				left && bottom && g.drawTexture(Image.getTexture(this._tex, 0, sh - bottom, left, bottom), 0, height - bottom, left, bottom);
-				right && bottom && g.drawTexture(Image.getTexture(this._tex, sw - right, sh - bottom, right, bottom), width - right, height - bottom, right, bottom);
+				right && top && g.drawTexture(Image.getTexture(this._tex, tw - right, 0, right, top), w - right, 0, right, top);
+				left && bottom && g.drawTexture(Image.getTexture(this._tex, 0, th - bottom, left, bottom), 0, h - bottom, left, bottom);
+				right && bottom && g.drawTexture(Image.getTexture(this._tex, tw - right, th - bottom, right, bottom), w - right, h - bottom, right, bottom);
 				//绘制上下两个边
-				centerWidth && top && drawTexture(0,Image.getTexture(this._tex, left, 0, sw - left - right, top), left, 0, centerWidth, top);				
-				centerWidth && bottom && drawTexture(1,Image.getTexture(this._tex, left, sh - bottom, sw - left - right, bottom), left, height - bottom, centerWidth, bottom);
+				centerWidth && top && drawTexture(0,Image.getTexture(this._tex, left, 0, tw - left - right, top), left, 0, centerWidth, top);				
+				centerWidth && bottom && drawTexture(1,Image.getTexture(this._tex, left, th - bottom, tw - left - right, bottom), left, h - bottom, centerWidth, bottom);
 				//绘制左右两边
-				centerHeight && left && drawTexture(2,Image.getTexture(this._tex, 0, top, left, sh - top - bottom), 0, top, left, centerHeight);
-				centerHeight && right && drawTexture(3,Image.getTexture(this._tex, sw - right, top, right, sh - top - bottom), width - right, top, right, centerHeight);
+				centerHeight && left && drawTexture(2,Image.getTexture(this._tex, 0, top, left, th - top - bottom), 0, top, left, centerHeight);
+				centerHeight && right && drawTexture(3,Image.getTexture(this._tex, tw - right, top, right, th - top - bottom), w - right, top, right, centerHeight);
 				//绘制中间
-				centerWidth && centerHeight && drawTexture(4,Image.getTexture(this._tex, left, top, sw - left - right, sh - top - bottom), left, top, centerWidth, centerHeight);
+				centerWidth && centerHeight && drawTexture(4,Image.getTexture(this._tex, left, top, tw - left - right, th - top - bottom), left, top, centerWidth, centerHeight);
 			}
 			else {
-				g.drawTexture(this._tex, 0, 0, width, height);
+				g.cleanByTexture(_tex, 0, 0, w, h);
 			}
-			
-			this.repaint();
 		}
 		
 		private function drawTexture(part:int, tex:Texture, x:Number, y:Number, width:Number = 0, height:Number = 0):void {
@@ -175,21 +250,33 @@ package fairygui.display {
 				this.graphics.drawTexture(tex, x, y, width, height);		
 			else
 				this.graphics.fillTexture(tex, x, y, width, height);
-			
 		}
 		
-		private static function getTexture(source:Object,x:Number,y:Number,width:Number,height:Number):Texture {            
-			source.$GID || (source.$GID=Utils.getGID());
-			var key:String=source.$GID+"."+x+"."+y+"."+width+"."+height;
-			var texture:Texture =Image._textureCache[key];
-			if (!texture){
-				texture=Image._textureCache[key]=Texture.create(source,x,y,width,height);
+		private static function getTexture(tex:Texture,x:Number,y:Number,width:Number,height:Number):Texture {            
+			if (width <= 0) width = 1;
+			if (height <= 0) height = 1;
+			tex.$_GID || (tex.$_GID = Utils.getGID())
+			var key:String = tex.$_GID + "." + x + "." + y + "." + width + "." + height;
+			var texture:Texture = WeakObject.I.get(key);
+			if (!texture||!texture.source) {
+				texture = Texture.createFromTexture(tex, x, y, width, height);
+				WeakObject.I.set(key, texture);
 			}
+
 			return texture;
 		}
 		
-		public static function clearCache():void {
-			Image._textureCache={};
+		private function doFill():void
+		{
+			var w:Number=this.width;
+			var h:Number=this.height;
+			var g:Graphics = _mask.graphics;
+			g.clear();
+			if(w==0 || h==0)
+				return;
+
+			var points:Array = FillUtils.fill(w, h, _fillMethod, _fillOrigin, _fillClockwise, _fillAmount);
+			g.drawPoly(0,0,points,"#FFFFFF");
 		}
 	}
 }

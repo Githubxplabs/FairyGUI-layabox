@@ -4,7 +4,6 @@ package fairygui.utils {
 	import laya.display.Node;
 	import laya.display.Stage;
 	import laya.utils.Byte;
-	import laya.utils.Ease;
 	
 	public class ToolSet {
 		public function ToolSet() {
@@ -124,21 +123,6 @@ package fairygui.utils {
 			return null;
 		}
 		
-		public static function findChildNode(xml: Object, name: String): Object {
-			var col: Array = xml.childNodes;
-			var length1: Number = col.length;
-			if (length1>0) {
-				for (var i1: Number = 0; i1 < length1; i1++) {
-					var cxml: Object = col[i1];
-					if (cxml.nodeName == name) {
-						return cxml;
-					}
-				}
-			}
-			
-			return null;
-		}
-		
 		public static function encodeHTML(str: String): String {
 			if (!str)
 				return "";
@@ -153,48 +137,6 @@ package fairygui.utils {
 		
 		public static function removeUBB(text: String) :String {
 			return ToolSet.defaultUBBParser.parse(text, true);
-		}
-		
-		private static var EaseMap: Object =
-			{
-				"Linear": Ease.linearNone,
-					"Elastic.In": Ease.elasticIn,
-					"Elastic.Out": Ease.elasticOut,
-					"Elastic.InOut": Ease.elasticInOut,
-					"Quad.In": Ease.quadIn,
-					"Quad.Out": Ease.quadOut,
-					"Quad.InOut": Ease.quadInOut,
-					"Cube.In": Ease.cubicIn,
-					"Cube.Out": Ease.cubicOut,
-					"Cube.InOut": Ease.cubicInOut,
-					"Quart.In": Ease.quartIn,
-					"Quart.Out": Ease.quartOut,
-					"Quart.InOut": Ease.quartInOut,
-					"Quint.In": Ease.quintIn,
-					"Quint.Out": Ease.quintOut,
-					"Quint.InOut": Ease.quintInOut,
-					"Sine.In": Ease.sineIn,
-					"Sine.Out": Ease.sineOut,
-					"Sine.InOut": Ease.sineInOut,
-					"Bounce.In": Ease.bounceIn,
-					"Bounce.Out": Ease.bounceOut,
-					"Bounce.InOut": Ease.bounceInOut,
-					"Circ.In": Ease.circIn,
-					"Circ.Out": Ease.circOut,
-					"Circ.InOut": Ease.circInOut,
-					"Expo.In": Ease.quartIn,
-					"Expo.Out": Ease.quartOut,
-					"Expo.InOut": Ease.quartInOut,
-					"Back.In": Ease.backIn,
-					"Back.Out": Ease.backOut,
-					"Back.InOut": Ease.backInOut
-			};
-		
-		public static function parseEaseType(value: String): Function {
-			var ret: Function = EaseMap[value];
-			if (!ret)
-				ret = Ease.quartOut;
-			return ret;
 		}
 		
 		public static function clamp(value:Number, min:Number, max:Number):Number
@@ -213,31 +155,6 @@ package fairygui.utils {
 			else if(value<0)
 				value = 0;
 			return value;
-		}
-		
-		private static const BASE64_CHARS:String = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-		public static function base64Decode(bstr:String):Byte {
-			var ba:Byte = new Byte();
-			var code:uint = 0;
-			var len:int = bstr.length;
-			for (var i:int = 0; i < len; i += 4) {
-				code = (BASE64_CHARS.indexOf(bstr.charAt(i)) & 0x3F) << 18;
-				code += (BASE64_CHARS.indexOf(bstr.charAt(i + 1)) & 0x3F) << 12;
-				code += (BASE64_CHARS.indexOf(bstr.charAt(i + 2)) & 0x3F) << 6;
-				code += (BASE64_CHARS.indexOf(bstr.charAt(i + 3)) & 0x3F);
-				
-				ba.writeByte((code >> 16) & 0xFF);
-				ba.writeByte((code >> 8) & 0xFF);
-				ba.writeByte(code & 0xFF);
-			}
-			
-			if(len>0 && bstr.charAt(len-1)=="=")
-				ba.length -= 1;
-			if(len>1 && bstr.charAt(len-2)=="=")
-				ba.length -= 1;
-
-			ba.pos = 0;
-			return ba;
 		}
 		
 		public static function lerp(start:Number, end:Number, percent:Number):Number
